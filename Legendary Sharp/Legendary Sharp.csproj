@@ -32,25 +32,30 @@
 
     <PropertyGroup>
       <NativeExe>$(OutputPath)$(NativeRuntimeIdentifier)\publish\$(AssemblyName).exe</NativeExe>
+      <VsInstallerDir>$([System.Environment]::GetFolderPath(SpecialFolder.ProgramFilesX86))\Microsoft Visual Studio\Installer</VsInstallerDir>
+      <NativePublishCommand>set "PATH=%25PATH%25;$(VsInstallerDir)" &amp;&amp; dotnet publish "$(MSBuildProjectFullPath)" -c $(Configuration) -r $(NativeRuntimeIdentifier) -p:NativePublishPass=true -p:Version=$(Version) --nologo</NativePublishCommand>
     </PropertyGroup>
 
     <Message Importance="high" Text="Release build finished, publishing the native single file exe..." />
 
-    <MSBuild Projects="$(MSBuildProjectFullPath)"
-             Targets="Publish"
-             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(NativeRuntimeIdentifier);SelfContained=true;NativePublishPass=true"
-             ContinueOnError="WarnAndContinue" />
+    <Delete Files="$(NativeExe)" ContinueOnError="true" />
+
+    <Exec Command="$(NativePublishCommand)"
+          IgnoreExitCode="true"
+          IgnoreStandardErrorWarningFormat="true"
+          ContinueOnError="true"
+          StandardOutputImportance="low" />
 
     <Copy SourceFiles="$(NativeExe)"
           DestinationFolder="$(ReleaseFolder)"
           Condition="Exists('$(NativeExe)')"
-          ContinueOnError="WarnAndContinue" />
+          ContinueOnError="true" />
 
     <Message Importance="high" Condition="Exists('$(ReleaseFolder)\$(AssemblyName).exe')"
              Text="Native exe ready: $(ReleaseFolder)\$(AssemblyName).exe" />
 
     <Warning Condition="!Exists('$(NativeExe)')"
-             Text="Native publish did not produce an exe. It needs the Visual Studio C++ build tools with vswhere.exe on PATH. Build with -p:PublishAfterBuild=false to skip it." />
+             Text="Skipped the native publish. It needs the Visual Studio C++ build tools. The managed build in $(OutputPath) is fine. Use -p:PublishAfterBuild=false to silence this." />
   </Target>
 
 </Project>
