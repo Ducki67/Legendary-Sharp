@@ -70,24 +70,10 @@ in `publish/`.
 dotnet build "Legendary Sharp/Legendary Sharp.csproj" -c Release
 ```
 
-The native step needs the Visual Studio C++ build tools with `vswhere.exe` on `PATH`. Without them the
-build still succeeds, it just warns and skips the publish. Skip it deliberately with
-`-p:PublishAfterBuild=false`.
+The native step needs the Visual Studio C++ build tools. Without them the build still succeeds, it
+just warns and leaves you the managed build. Skip it deliberately with `-p:PublishAfterBuild=false`.
 
 Debug builds never publish.
-
-## Releases
-
-Every push to `main` builds on CI and uploads the exe as an artifact. Tagging cuts a release:
-
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-That builds with the version from the tag, attaches `LegendarySharp-v1.0.0.exe` to a GitHub release
-and generates the notes. The version shown in the app comes from the same place, so the banner always
-matches the tag. Tags must be `vMAJOR.MINOR.PATCH`.
 
 ## Contributing
 
