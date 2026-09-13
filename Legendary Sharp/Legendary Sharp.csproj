@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Legendary_Sharp</RootNamespace>
+    <AssemblyName>LegendarySharp</AssemblyName>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsAotCompatible>true</IsAotCompatible>
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+    <Version>1.0.0</Version>
+    <Product>Legendary Sharp</Product>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <PublishAfterBuild Condition="'$(PublishAfterBuild)' == ''">true</PublishAfterBuild>
+    <NativeRuntimeIdentifier Condition="'$(NativeRuntimeIdentifier)' == ''">win-x64</NativeRuntimeIdentifier>
+    <ReleaseFolder>$([System.IO.Path]::GetFullPath($(MSBuildProjectDirectory)\..\publish))</ReleaseFolder>
+  </PropertyGroup>
+
+  <Target Name="PublishNative" AfterTargets="Build"
+          Condition="'$(Configuration)' == 'Release'
+                     And '$(PublishAfterBuild)' == 'true'
+                     And '$(NativePublishPass)' != 'true'
+                     And '$(_IsPublishing)' != 'true'">
+
+    <PropertyGroup>
+      <NativeExe>$(OutputPath)$(NativeRuntimeIdentifier)\publish\$(AssemblyName).exe</NativeExe>
+    </PropertyGroup>
+
+    <Message Importance="high" Text="Release build finished, publishing the native single file exe..." />
+
+    <MSBuild Projects="$(MSBuildProjectFullPath)"
+             Targets="Publish"
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(NativeRuntimeIdentifier);SelfContained=true;NativePublishPass=true"
+             ContinueOnError="WarnAndContinue" />
+
+    <Copy SourceFiles="$(NativeExe)"
+          DestinationFolder="$(ReleaseFolder)"
+          Condition="Exists('$(NativeExe)')"
+          ContinueOnError="WarnAndContinue" />
+
+    <Message Importance="high" Condition="Exists('$(ReleaseFolder)\$(AssemblyName).exe')"
+             Text="Native exe ready: $(ReleaseFolder)\$(AssemblyName).exe" />
+
+    <Warning Condition="!Exists('$(NativeExe)')"
+             Text="Native publish did not produce an exe. It needs the Visual Studio C++ build tools with vswhere.exe on PATH. Build with -p:PublishAfterBuild=false to skip it." />
+  </Target>
+
+</Project>
