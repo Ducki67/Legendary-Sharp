@@ -40,7 +40,12 @@
 
     <Delete Files="$(NativeExe)" ContinueOnError="true" />
 
+    <PropertyGroup>
+      <NativeExeLocked Condition="Exists('$(NativeExe)')">true</NativeExeLocked>
+    </PropertyGroup>
+
     <Exec Command="$(NativePublishCommand)"
+          Condition="'$(NativeExeLocked)' != 'true'"
           IgnoreExitCode="true"
           IgnoreStandardErrorWarningFormat="true"
           ContinueOnError="true"
@@ -48,13 +53,17 @@
 
     <Copy SourceFiles="$(NativeExe)"
           DestinationFolder="$(ReleaseFolder)"
-          Condition="Exists('$(NativeExe)')"
+          Condition="'$(NativeExeLocked)' != 'true' And Exists('$(NativeExe)')"
           ContinueOnError="true" />
 
-    <Message Importance="high" Condition="Exists('$(ReleaseFolder)\$(AssemblyName).exe')"
+    <Message Importance="high"
+             Condition="'$(NativeExeLocked)' != 'true' And Exists('$(NativeExe)')"
              Text="Native exe ready: $(ReleaseFolder)\$(AssemblyName).exe" />
 
-    <Warning Condition="!Exists('$(NativeExe)')"
+    <Error Condition="'$(NativeExeLocked)' == 'true'"
+           Text="$(NativeExe) is running, so the new exe could not be written. Close every LegendarySharp window and build again. Nothing in $(ReleaseFolder) was touched, so it still holds the previous build." />
+
+    <Warning Condition="'$(NativeExeLocked)' != 'true' And !Exists('$(NativeExe)')"
              Text="Skipped the native publish. It needs the Visual Studio C++ build tools. The managed build in $(OutputPath) is fine. Use -p:PublishAfterBuild=false to silence this." />
   </Target>
 

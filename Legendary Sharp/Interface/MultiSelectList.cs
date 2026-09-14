@@ -29,7 +29,7 @@ internal sealed class MultiSelectList<T> : ListView<T>
         if (choices.Count == 0) return false;
 
         var view = new MultiSelectList<T>(title, choices, preselected, summary,
-            hint ?? "↑↓ move   space toggle   ctrl+a all   ctrl+n none   ⏎ confirm   esc back");
+            hint ?? $"{Hints.Move}   {Hints.Toggle} toggles   ctrl+a all   ctrl+n none   ⏎ confirm   esc back");
 
         if (!view.Run()) return false;
         values = view.Selected;
@@ -47,6 +47,8 @@ internal sealed class MultiSelectList<T> : ListView<T>
             return _summary is null ? prefix : prefix + "   ·   " + _summary(selected);
         }
     }
+
+    protected override ConsoleKey ClickKey => ConsoleKey.Spacebar;
 
     protected override MarkerInfo Marker(int choiceIndex) =>
         _checked.Contains(choiceIndex)

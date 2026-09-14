@@ -57,12 +57,26 @@ internal static class UefnWorkflow
         {
             Source = resolved,
             InstallRoot = installRoot,
-            Tags = [],
+            Tags = null,
             IsAddon = true,
             AssumeYes = assumeYes
         };
 
-        return await DownloadWorkflow.RunAsync(session, request, cancellation).ConfigureAwait(false);
+        var code = await DownloadWorkflow.RunAsync(session, request, cancellation).ConfigureAwait(false);
+        if (code != 0) return code;
+
+        var editor = Path.Combine(installRoot, FortniteConstants.BinariesFolder, FortniteConstants.UefnExecutable);
+
+        if (File.Exists(editor))
+        {
+            Output.Success($"{FortniteConstants.UefnExecutable} is in place.");
+            return 0;
+        }
+
+        Output.Blank();
+        Output.Error($"{FortniteConstants.UefnExecutable} is missing after the install.");
+        Output.Hint("Run it again from My builds, and if it keeps happening please open an issue.");
+        return 1;
     }
 
     public static async Task OfferAsync(

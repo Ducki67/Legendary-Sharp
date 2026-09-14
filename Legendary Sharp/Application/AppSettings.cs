@@ -2,11 +2,16 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Legendary_Sharp.Downloader;
 using Legendary_Sharp.Fortnite;
+using Legendary_Sharp.Interface;
 
 namespace Legendary_Sharp.Application;
 
 internal sealed class AppSettings
 {
+    public const string MouseFull = "full";
+    public const string MouseScroll = "scroll";
+    public const string MouseOff = "off";
+
     [JsonPropertyName("installRoot")] public string InstallRoot { get; set; } = string.Empty;
 
     [JsonPropertyName("libraryRoots")] public List<string> LibraryRoots { get; set; } = [];
@@ -23,6 +28,15 @@ internal sealed class AppSettings
 
     [JsonPropertyName("offerUefn")] public bool OfferUefn { get; set; } = true;
 
+    [JsonPropertyName("mouse")] public string Mouse { get; set; } = MouseFull;
+
+    [JsonIgnore] public PointerMode Pointer => Mouse switch
+    {
+        MouseScroll => PointerMode.Scroll,
+        MouseOff => PointerMode.Off,
+        _ => PointerMode.Full
+    };
+
     [JsonIgnore] public IReadOnlyList<string> EffectiveMirrors =>
         Mirrors.Count > 0 ? Mirrors : FortniteConstants.CloudMirrors;
 
@@ -30,6 +44,13 @@ internal sealed class AppSettings
 
     [JsonIgnore] public string EffectiveInstallRoot =>
         InstallRoot.Length > 0 ? InstallRoot : DefaultInstallRoot();
+
+    public static string NameOf(PointerMode mode) => mode switch
+    {
+        PointerMode.Scroll => MouseScroll,
+        PointerMode.Off => MouseOff,
+        _ => MouseFull
+    };
 
     public static string DefaultInstallRoot()
     {
@@ -58,6 +79,20 @@ internal sealed class AppSettings
         {
             return new AppSettings();
         }
+    }
+
+    public void ResetToDefaults()
+    {
+        var defaults = new AppSettings();
+        InstallRoot = defaults.InstallRoot;
+        LibraryRoots = defaults.LibraryRoots;
+        Workers = defaults.Workers;
+        CacheBudgetMiB = defaults.CacheBudgetMiB;
+        Mirrors = defaults.Mirrors;
+        Preset = defaults.Preset;
+        CatalogMaxAgeHours = defaults.CatalogMaxAgeHours;
+        OfferUefn = defaults.OfferUefn;
+        Mouse = defaults.Mouse;
     }
 
     public void Save(AppPaths paths)

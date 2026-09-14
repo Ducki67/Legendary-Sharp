@@ -36,6 +36,8 @@ internal static class Bootstrap
         try
         {
             using var session = Session.Create();
+            ConsoleEx.ApplyPointer(session.Settings.Pointer);
+
             var code = await new InteractiveShell(session).RunAsync(cancellation.Token).ConfigureAwait(false);
 
             ConsoleEx.Clear();
@@ -64,6 +66,7 @@ internal static class Bootstrap
         finally
         {
             ConsoleEx.ShowCursor();
+            ConsoleInput.Restore();
         }
     }
 }

@@ -11,7 +11,7 @@ internal sealed record DownloadRequest
 
     public required string InstallRoot { get; init; }
 
-    public required IReadOnlyList<string> Tags { get; init; }
+    public required IReadOnlyList<string>? Tags { get; init; }
 
     public int? Workers { get; init; }
 
@@ -41,6 +41,9 @@ internal static class DownloadWorkflow
         using var resume = ResumeLog.Open(InstallRecord.StateDirectory(root),
             request.IsAddon ? "uefn.txt" : "completed.txt");
         if (request.Fresh) resume.Clear();
+
+        if (request.Tags is { Count: 0 })
+            throw new InvalidOperationException("No install tags were selected, so there is nothing to download.");
 
         var plan = BuildPlan(request, manifest, root, resume);
         var options = session.BuildDownloadOptions(root, request.Workers, request.CacheBudgetMiB);
@@ -84,15 +87,13 @@ internal static class DownloadWorkflow
 
             if (!skipMissing)
             {
-                if (!ConsoleEx.IsInteractive || request.AssumeYes)
+                Output.Blank();
+                skipMissing = Prompt.Ask("Download what is still there and list the rest?", false) == true;
+
+                if (!skipMissing)
                 {
-                    Output.Hint("Add --skip-missing to download what is still there.");
-                }
-                else
-                {
-                    Output.Blank();
-                    skipMissing = Prompt.Ask("Download what is still available and list the rest?") == true;
-                    if (!skipMissing) return 130;
+                    Output.Hint("Cancelled.");
+                    return 130;
                 }
             }
         }
@@ -185,7 +186,7 @@ internal static class DownloadWorkflow
         ResumeLog resume)
     {
         if (request.RepairFiles is not null)
-            return DownloadPlanner.CreateForFiles(manifest, request.RepairFiles, request.Tags);
+            return DownloadPlanner.CreateForFiles(manifest, request.RepairFiles, request.Tags ?? []);
 
         var scan = request.Fresh ? default : resume.Scan(manifest, root);
 
@@ -211,7 +212,8 @@ internal static class DownloadWorkflow
             .Row("Format", $"{manifest.Format.ToString().ToLowerInvariant()}, feature level {manifest.FeatureLevel}")
             .Row("Folder", root);
 
-        if (request.RepairFiles is null) panel.Row("Install tags", DescribeTags(request.Tags, manifest));
+        if (request.RepairFiles is null && !request.IsAddon)
+            panel.Row("Install tags", DescribeTags(request.Tags, manifest));
 
         panel.Gap()
             .Row("Files to write", Format.Count(plan.Files.Count) +
@@ -227,10 +229,12 @@ internal static class DownloadWorkflow
             .Render();
     }
 
-    private static string DescribeTags(IReadOnlyList<string> tags, BuildManifest manifest)
+    private static string DescribeTags(IReadOnlyList<string>? tags, BuildManifest manifest)
     {
+        if (tags is null) return "everything";
+
         var available = manifest.InstallTags.Count + (manifest.HasUntaggedFiles ? 1 : 0);
-        if (tags.Count == 0) return "everything";
+        if (tags.Count == 0) return "nothing selected";
         if (tags.Count >= available) return $"everything ({tags.Count} tags)";
 
         var names = tags.Select(tag => tag.Length == 0 ? "(untagged)" : tag);
@@ -274,7 +278,7 @@ internal static class DownloadWorkflow
         record.AppName = manifest.AppName;
         record.LaunchExe = manifest.LaunchExe;
         record.InstallSize = plan.SelectedInstallSize;
-        if (request.RepairFiles is null) record.InstallTags = [.. request.Tags];
+        if (request.RepairFiles is null) record.InstallTags = [.. request.Tags ?? []];
         if (complete) record.CompletedUtc = DateTime.UtcNow;
         record.Save(root);
 

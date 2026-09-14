@@ -411,7 +411,7 @@ internal sealed class InteractiveShell(Session session)
             Header();
 
             if (!SelectionList<ReleaseEntry>.TryPick("Browse every known build", choices, out var entry,
-                    "↑↓ move   type to filter by version, season, date or note   ⏎ open   esc back",
+                    $"{Hints.Move}   {Hints.Jump}   type to filter   {Hints.Open}   esc back",
                     status)) return;
 
             if (!await InspectAsync(entry, cancellation).ConfigureAwait(false)) return;

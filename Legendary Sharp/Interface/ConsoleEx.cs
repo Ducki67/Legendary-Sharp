@@ -125,7 +125,33 @@ internal static partial class ConsoleEx
         else if (IsInteractive) Console.Clear();
     }
 
-    public static ConsoleKeyInfo ReadKey() => Console.ReadKey(intercept: true);
+    public static ConsoleKeyInfo ReadKey()
+    {
+        while (true)
+        {
+            var input = ConsoleInput.Read();
+            if (input.IsKey) return input.Key;
+        }
+    }
+
+    public static InputEvent ReadInput() => ConsoleInput.Read();
+
+    public static void ApplyPointer(PointerMode mode)
+    {
+        if (IsInteractive) ConsoleInput.Apply(mode);
+    }
+
+    public static int CursorRow()
+    {
+        try
+        {
+            return Console.CursorTop;
+        }
+        catch (IOException)
+        {
+            return 0;
+        }
+    }
 
     public static void PauseForKey(string message)
     {

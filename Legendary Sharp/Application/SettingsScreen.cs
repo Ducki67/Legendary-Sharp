@@ -14,6 +14,7 @@ internal sealed class SettingsScreen(Session session)
         Preset,
         CatalogAge,
         OfferUefn,
+        Mouse,
         Reset,
         Back
     }
@@ -36,12 +37,13 @@ internal sealed class SettingsScreen(Session session)
                 new(Field.CatalogAge, "Release index max age", $"{settings.CatalogMaxAgeHours} hours"),
                 new(Field.OfferUefn, "Offer UEFN after a download",
                     settings.OfferUefn ? "yes, when a matching release exists" : "no, never ask"),
+                new(Field.Mouse, "Mouse and scrolling", DescribePointer(settings)),
                 new(Field.Reset, "Reset to defaults", "restore every setting"),
                 new(Field.Back, "Back", "return to the menu")
             };
 
             if (!SelectionList<Field>.TryPick("Settings", choices, out var field,
-                    "↑↓ move   ⏎ edit   esc back")) return;
+                    $"{Hints.Move}   {Hints.Edit}   esc back")) return;
 
             if (field == Field.Back) return;
             if (!Edit(field, settings)) continue;
@@ -107,10 +109,34 @@ internal sealed class SettingsScreen(Session session)
                 settings.OfferUefn = !settings.OfferUefn;
                 return true;
 
+            case Field.Mouse:
+            {
+                var modes = new List<Choice<PointerMode>>
+                {
+                    new(PointerMode.Full, "Scroll and click",
+                        "the wheel moves the highlight and a left click picks the row"),
+                    new(PointerMode.Scroll, "Scroll only",
+                        "the wheel moves the highlight, clicks are ignored"),
+                    new(PointerMode.Off, "Arrow keys only",
+                        "no mouse, and the console keeps its own text selection")
+                };
+
+                if (!SelectionList<PointerMode>.TryPick("Mouse and scrolling", modes, out var mode,
+                        $"{Hints.Move}   {Hints.Choose}   esc back")) return false;
+
+                settings.Mouse = AppSettings.NameOf(mode);
+                ConsoleEx.ApplyPointer(mode);
+                return true;
+            }
+
             case Field.Reset:
             {
                 if (Prompt.Ask("Reset every setting to its default?", false) != true) return false;
-                new AppSettings().Save(session.Paths);
+
+                settings.ResetToDefaults();
+                settings.Save(session.Paths);
+                ConsoleEx.ApplyPointer(settings.Pointer);
+
                 Output.Blank();
                 Output.Success("Settings reset.");
                 ConsoleEx.PauseForKey("Press any key to continue.");
@@ -145,6 +171,14 @@ internal sealed class SettingsScreen(Session session)
     }
 
     private static string Describe(string key) => TagPresets.Find(key)?.Name ?? key;
+
+    private static string DescribePointer(AppSettings settings) => settings.Pointer switch
+    {
+        PointerMode.Off => "arrow keys only",
+        _ when !ConsoleInput.ScrollAvailable => "this console has no mouse support",
+        PointerMode.Scroll => "scroll to move, arrows and enter to pick",
+        _ => "scroll to move, click to pick"
+    };
 
     public static string DefaultRoot() => AppSettings.DefaultInstallRoot();
 }

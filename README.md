@@ -12,10 +12,10 @@ built for pulling old builds from Epic's CDN.
 
 - Single 7.4 MB native exe, no install, no dependencies
 - Reads both manifest formats, binary and the pre-2021 JSON ones
-- Arrow key menu, no commands to learn
+- Arrow key menu with mouse scrolling and click to pick, no commands to learn
 - Install tag picker with real sizes, so a full build is one keypress
 - Tells you up front how much of an old build Epic still hosts
-- Adds UEFN to any build from 24.01, matched by changelist
+- Adds UEFN to any build from 24.20, matched by changelist
 - Resumes after a crash, verifies every chunk and file against the manifest
 
 
@@ -28,7 +28,7 @@ Double click `LegendarySharp.exe`. Everything is in the menu:
 | **Download a build** | Pick a season or jump straight to builds confirmed to download in full, choose how much of it you want, and go |
 | **My builds** | Verify, repair, resume an interrupted download, or add UEFN |
 | **Browse releases** | Every known build, type to filter, open one to check availability, read its manifest or download it |
-| **Settings** | Install folder, workers, memory budget, default preset |
+| **Settings** | Install folder, workers, memory budget, default preset, mouse and scrolling |
 
 Downloads go to `Documents\FortniteBuilds` unless you change the install root.
 

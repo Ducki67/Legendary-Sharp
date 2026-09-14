@@ -22,7 +22,7 @@ internal sealed class SelectionList<T> : ListView<T>
         if (choices.Count == 0) return false;
 
         var view = new SelectionList<T>(title, choices,
-            hint ?? "↑↓ move   ⏎ select   type to filter   esc back", status);
+            hint ?? $"{Hints.Move}   {Hints.Jump}   {Hints.Choose}   type to filter   esc back", status);
 
         if (!view.Run() || view._result is null) return false;
         value = view._result.Value;

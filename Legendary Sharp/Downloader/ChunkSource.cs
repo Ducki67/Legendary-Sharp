@@ -55,7 +55,7 @@ internal sealed class ChunkSource : IDisposable
                 Interlocked.Add(ref _transferred, payload.Length);
                 return ChunkFile.Unpack(payload, chunk, verify: true);
             }
-            catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.NotFound)
+            catch (HttpRequestException error) when (IsGone(error.StatusCode))
             {
                 gone[index] = true;
                 last = error;
@@ -95,7 +95,6 @@ internal sealed class ChunkSource : IDisposable
                 using var request = new HttpRequestMessage(HttpMethod.Head, $"{mirror}/{path}");
                 using var response = await _client.SendAsync(request, cancellation).ConfigureAwait(false);
                 if (response.IsSuccessStatusCode) return true;
-                if (response.StatusCode != HttpStatusCode.NotFound) return false;
             }
             catch (HttpRequestException)
             {
@@ -104,6 +103,9 @@ internal sealed class ChunkSource : IDisposable
 
         return false;
     }
+
+    private static bool IsGone(HttpStatusCode? status) =>
+        status is HttpStatusCode.NotFound or HttpStatusCode.Forbidden or HttpStatusCode.Gone;
 
     public void Dispose() => _client.Dispose();
 }
