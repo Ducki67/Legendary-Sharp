@@ -7,4 +7,5 @@ namespace Legendary_Sharp.Application;
 [JsonSourceGenerationOptions(WriteIndented = true, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(AppSettings))]
 [JsonSerializable(typeof(InstallRecord))]
+[JsonSerializable(typeof(QueueTicket))]
 internal sealed partial class AppJson : JsonSerializerContext;

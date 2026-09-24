@@ -97,8 +97,7 @@ internal sealed class AppSettings
 
     public void Save(AppPaths paths)
     {
-        Directory.CreateDirectory(paths.Root);
-        File.WriteAllText(paths.SettingsFile, JsonSerializer.Serialize(this, AppJson.Default.AppSettings));
+        AtomicFile.WriteAllText(paths.SettingsFile, JsonSerializer.Serialize(this, AppJson.Default.AppSettings));
     }
 
     public IEnumerable<string> ScanRoots()

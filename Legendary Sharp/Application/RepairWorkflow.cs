@@ -15,7 +15,7 @@ internal static class RepairWorkflow
         {
             Source = build.Source,
             InstallRoot = build.Root,
-            Tags = build.Record.InstallTags,
+            Tags = build.Record.InstallTags.Count > 0 ? build.Record.InstallTags : null,
             RepairFiles = report.NeedsRepair
         };
 

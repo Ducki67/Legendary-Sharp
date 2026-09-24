@@ -10,9 +10,9 @@ internal sealed record DownloadOptions
 
     public long CacheBudgetBytes { get; init; } = 1024L * 1024 * 1024;
 
-    public TimeSpan RequestTimeout { get; init; } = TimeSpan.FromSeconds(45);
+    public TimeSpan StallTimeout { get; init; } = TimeSpan.FromSeconds(30);
 
-    public int Attempts { get; init; } = 5;
+    public int Attempts { get; init; } = 10;
 
     public bool SkipMissing { get; init; }
 

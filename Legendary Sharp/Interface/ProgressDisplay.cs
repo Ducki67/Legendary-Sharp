@@ -11,6 +11,7 @@ internal sealed class ProgressDisplay : IDisposable
     private readonly string _action;
     private readonly string _target;
     private readonly bool _live;
+    private readonly IDisposable? _selection;
 
     private DateTime _lastPaint = DateTime.MinValue;
     private int _renderedLines;
@@ -21,7 +22,10 @@ internal sealed class ProgressDisplay : IDisposable
         _action = action;
         _target = target;
         _live = ConsoleEx.SupportsColor && ConsoleEx.IsInteractive;
-        if (_live) ConsoleEx.HideCursor();
+        if (!_live) return;
+
+        _selection = ConsoleInput.SuspendSelection();
+        ConsoleEx.HideCursor();
     }
 
     public void Update(in DownloadProgress progress, bool force = false)
@@ -62,6 +66,7 @@ internal sealed class ProgressDisplay : IDisposable
             _finished = true;
             Erase();
             ConsoleEx.ShowCursor();
+            _selection?.Dispose();
         }
     }
 

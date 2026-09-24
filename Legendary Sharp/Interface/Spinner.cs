@@ -8,6 +8,7 @@ internal sealed class Spinner : IDisposable
     private readonly Task _loop;
     private readonly string _message;
     private readonly bool _live;
+    private readonly IDisposable? _selection;
 
     private Spinner(string message)
     {
@@ -21,6 +22,7 @@ internal sealed class Spinner : IDisposable
             return;
         }
 
+        _selection = ConsoleInput.SuspendSelection();
         ConsoleEx.HideCursor();
         _loop = Task.Run(Animate);
     }
@@ -64,6 +66,7 @@ internal sealed class Spinner : IDisposable
 
         ConsoleEx.Write(Ansi.LineStart + Ansi.EraseToLineEnd);
         ConsoleEx.ShowCursor();
+        _selection?.Dispose();
     }
 
     private async Task Animate()

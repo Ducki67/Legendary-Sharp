@@ -38,33 +38,36 @@ internal static class ManifestResolver
         if (manifestId.Length == 0 || manifestId.Any(Path.GetInvalidFileNameChars().Contains))
             throw new InvalidOperationException($"\"{reference}\" is not a build, a manifest id or an existing file.");
 
-        var fetched = await FetchAsync(manifestId, http, paths, cancellation).ConfigureAwait(false);
+        var (fetched, origin, failure) = await FetchAsync(manifestId, http, paths, cancellation).ConfigureAwait(false);
 
         if (fetched is null)
-            throw new InvalidOperationException(release is null
-                ? $"\"{reference}\" is not a build in the release index, a manifest id that could be downloaded, " +
-                  "or a file on disk. Search for the build you want with \"list\"."
-                : $"{release.Version} is in the release index but manifest {manifestId} could not be downloaded " +
-                  "from fn-releases or any Epic mirror.");
+            throw new InvalidOperationException(
+                $"{release?.Version ?? manifestId} could not be read from any manifest archive or Epic mirror" +
+                (failure is null ? "." : $", the last error was: {failure.Message}"));
 
-        return new ResolvedManifest(ManifestLoader.Parse(fetched.Value.Bytes), manifestId, fetched.Value.Origin, release);
+        return new ResolvedManifest(fetched, manifestId, origin, release);
     }
 
-    public static async Task<byte[]> LoadCachedAsync(string manifestId, AppPaths paths, CancellationToken cancellation)
-    {
-        var path = CachePath(manifestId, paths);
-        return await File.ReadAllBytesAsync(path, cancellation).ConfigureAwait(false);
-    }
-
-    private static async Task<(byte[] Bytes, string Origin)?> FetchAsync(
+    private static async Task<(BuildManifest? Manifest, string Origin, Exception? Failure)> FetchAsync(
         string manifestId,
         ChunkSource http,
         AppPaths paths,
         CancellationToken cancellation)
     {
         var cached = CachePath(manifestId, paths);
+
         if (File.Exists(cached))
-            return (await File.ReadAllBytesAsync(cached, cancellation).ConfigureAwait(false), "local cache");
+        {
+            try
+            {
+                var bytes = await File.ReadAllBytesAsync(cached, cancellation).ConfigureAwait(false);
+                return (ManifestLoader.Parse(bytes), "local cache", null);
+            }
+            catch (Exception error) when (!cancellation.IsCancellationRequested && error is not OutOfMemoryException)
+            {
+                TryDelete(cached);
+            }
+        }
 
         var candidates = new List<(string Url, string Origin)>
         {
@@ -76,21 +79,47 @@ internal static class ManifestResolver
         candidates.AddRange(FortniteConstants.CloudMirrors
             .Select(mirror => ($"{mirror}/{manifestId}.manifest", new Uri(mirror).Host)));
 
+        Exception? failure = null;
+
         foreach (var (url, origin) in candidates)
         {
             try
             {
                 var bytes = await http.GetAsync(url, cancellation).ConfigureAwait(false);
-                Directory.CreateDirectory(Path.GetDirectoryName(cached)!);
-                await File.WriteAllBytesAsync(cached, bytes, cancellation).ConfigureAwait(false);
-                return (bytes, origin);
+                var manifest = ManifestLoader.Parse(bytes);
+                TryCache(cached, bytes);
+                return (manifest, origin, null);
             }
-            catch (Exception error) when (error is not OperationCanceledException)
+            catch (Exception error) when (!cancellation.IsCancellationRequested)
             {
+                if (error is not HttpRequestException { StatusCode: System.Net.HttpStatusCode.NotFound })
+                    failure = error;
             }
         }
 
-        return null;
+        return (null, string.Empty, failure);
+    }
+
+    private static void TryCache(string path, byte[] bytes)
+    {
+        try
+        {
+            AtomicFile.WriteAllBytes(path, bytes);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+        }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+        }
     }
 
     private static string CachePath(string manifestId, AppPaths paths) =>

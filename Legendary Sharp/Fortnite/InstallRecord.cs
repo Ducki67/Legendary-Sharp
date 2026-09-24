@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Legendary_Sharp.Application;
+using Legendary_Sharp.Downloader;
 
 namespace Legendary_Sharp.Fortnite;
 
@@ -53,7 +54,7 @@ internal sealed class InstallRecord
         {
             return JsonSerializer.Deserialize(File.ReadAllText(path), AppJson.Default.InstallRecord);
         }
-        catch (JsonException)
+        catch (Exception error) when (error is JsonException or IOException or UnauthorizedAccessException)
         {
             return null;
         }
@@ -61,7 +62,6 @@ internal sealed class InstallRecord
 
     public void Save(string installRoot)
     {
-        Directory.CreateDirectory(StateDirectory(installRoot));
-        File.WriteAllText(RecordPath(installRoot), JsonSerializer.Serialize(this, AppJson.Default.InstallRecord));
+        AtomicFile.WriteAllText(RecordPath(installRoot), JsonSerializer.Serialize(this, AppJson.Default.InstallRecord));
     }
 }

@@ -144,11 +144,23 @@ internal static class BuildView
                 .ConfigureAwait(false);
         }
 
-        new Panel()
+        if (report.IsOffline)
+        {
+            Output.Error("Could not reach any of Epic's CDN mirrors.");
+            Output.Hint("Check your connection, a VPN or firewall can also block them.");
+            Output.Blank();
+            return;
+        }
+
+        var panel = new Panel()
             .Row("Sampled", Format.Count(report.Sampled))
             .Row("Still hosted", $"{Format.Count(report.Available)}  ({Format.Percent(report.Fraction)})",
-                report.IsComplete ? Theme.Success : Theme.Warning)
-            .Render();
+                report.IsComplete ? Theme.Success : Theme.Warning);
+
+        if (report.Unreachable > 0)
+            panel.Row("Not checked", $"{Format.Count(report.Unreachable)}  (no mirror answered)", Theme.Muted);
+
+        panel.Render();
 
         Output.Blank();
 

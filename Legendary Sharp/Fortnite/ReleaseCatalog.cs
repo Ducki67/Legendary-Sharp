@@ -24,10 +24,10 @@ internal sealed class ReleaseCatalog(IReadOnlyList<ReleaseEntry> entries, DateTi
         CancellationToken cancellation)
     {
         var releases = await FetchAsync(source, paths, "fn-releases.md", FortniteConstants.ReleaseIndexUrl,
-            maximumAge, forceRefresh, cancellation).ConfigureAwait(false);
+            maximumAge, forceRefresh, required: true, cancellation).ConfigureAwait(false);
 
         var archive = await FetchAsync(source, paths, "fn-archive.md", FortniteConstants.ArchiveIndexUrl,
-            maximumAge, forceRefresh, cancellation).ConfigureAwait(false);
+            maximumAge, forceRefresh, required: false, cancellation).ConfigureAwait(false);
 
         var catalog = Parse(releases.Text, releases.Retrieved);
         return archive.Text.Length == 0 ? catalog : catalog.Merge(Parse(archive.Text, archive.Retrieved));
@@ -40,6 +40,7 @@ internal sealed class ReleaseCatalog(IReadOnlyList<ReleaseEntry> entries, DateTi
         string url,
         TimeSpan maximumAge,
         bool forceRefresh,
+        bool required,
         CancellationToken cancellation)
     {
         var cache = Path.Combine(paths.Cache, fileName);
@@ -52,17 +53,26 @@ internal sealed class ReleaseCatalog(IReadOnlyList<ReleaseEntry> entries, DateTi
         {
             var payload = await source.GetAsync(url, cancellation).ConfigureAwait(false);
             var text = Encoding.UTF8.GetString(payload);
-            Directory.CreateDirectory(paths.Cache);
-            await File.WriteAllTextAsync(cache, text, cancellation).ConfigureAwait(false);
+
+            if (Parse(text, DateTime.UtcNow).Entries.Count == 0)
+                throw new InvalidDataException("the page no longer has a release table");
+
+            AtomicFile.WriteAllBytes(cache, payload);
             return (text, DateTime.UtcNow);
         }
-        catch (Exception) when (info.Exists)
+        catch (Exception) when (info.Exists && !cancellation.IsCancellationRequested)
         {
             return (await File.ReadAllTextAsync(cache, cancellation).ConfigureAwait(false), info.LastWriteTimeUtc);
         }
-        catch (Exception)
+        catch (Exception) when (!required && !cancellation.IsCancellationRequested)
         {
             return (string.Empty, DateTime.UtcNow);
+        }
+        catch (Exception error) when (!cancellation.IsCancellationRequested)
+        {
+            throw new InvalidOperationException(
+                $"Could not download the release index from GitHub, {error.Message.TrimEnd('.')}. Check your connection.",
+                error);
         }
     }
 

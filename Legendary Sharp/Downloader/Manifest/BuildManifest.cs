@@ -28,6 +28,8 @@ internal sealed class BuildManifest
         CustomFields = customFields;
         Format = format;
 
+        foreach (var file in files) Naming.EnsureSafePath(file.FileName);
+
         _chunkLookup = new Dictionary<ChunkGuid, ChunkInfo>(chunks.Count);
         foreach (var chunk in chunks) _chunkLookup[chunk.Guid] = chunk;
 
@@ -85,6 +87,29 @@ internal enum ManifestFormat
 
 internal static class Naming
 {
+    private static readonly char[] Separators = ['/', '\\'];
+
+    private static readonly char[] UnsafeCharacters =
+        [.. Path.GetInvalidFileNameChars().Except(Separators), ':'];
+
+    public static void EnsureSafePath(string fileName)
+    {
+        if (!IsSafePath(fileName))
+            throw new InvalidDataException(
+                $"The manifest lists a file outside the install folder, \"{fileName}\", so it was not used.");
+    }
+
+    public static bool IsSafePath(string fileName)
+    {
+        if (fileName.Length == 0 || Array.IndexOf(Separators, fileName[0]) >= 0) return false;
+        if (fileName.IndexOfAny(UnsafeCharacters) >= 0) return false;
+
+        foreach (var segment in fileName.Split(Separators))
+            if (segment == "..") return false;
+
+        return true;
+    }
+
     public static string ShortenBuildVersion(string buildVersion)
     {
         if (buildVersion.Length == 0) return "unknown";

@@ -25,7 +25,7 @@ internal sealed class Session : IDisposable
     {
         var paths = AppPaths.Create();
         var settings = AppSettings.Load(paths);
-        var http = new ChunkSource(settings.EffectiveMirrors, settings.Workers, TimeSpan.FromSeconds(45));
+        var http = new ChunkSource(settings.EffectiveMirrors, settings.Workers, TimeSpan.FromSeconds(30));
         return new Session(paths, settings, http);
     }
 

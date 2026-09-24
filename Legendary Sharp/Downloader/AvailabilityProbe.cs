@@ -2,15 +2,19 @@ using Legendary_Sharp.Downloader.Manifest;
 
 namespace Legendary_Sharp.Downloader;
 
-internal readonly record struct AvailabilityReport(int Sampled, int Available)
+internal readonly record struct AvailabilityReport(int Sampled, int Available, int Unreachable)
 {
-    public int Missing => Sampled - Available;
+    public int Checked => Sampled - Unreachable;
 
-    public double Fraction => Sampled == 0 ? 1d : (double)Available / Sampled;
+    public int Missing => Checked - Available;
+
+    public double Fraction => Checked == 0 ? 1d : (double)Available / Checked;
 
     public bool IsComplete => Missing == 0;
 
-    public bool IsHopeless => Sampled > 0 && Available == 0;
+    public bool IsHopeless => Checked > 0 && Available == 0;
+
+    public bool IsOffline => Sampled > 0 && Checked == 0;
 }
 
 internal static class AvailabilityProbe
@@ -22,9 +26,10 @@ internal static class AvailabilityProbe
         CancellationToken cancellation)
     {
         var sample = Sample(plan, sampleSize);
-        if (sample.Count == 0) return new AvailabilityReport(0, 0);
+        if (sample.Count == 0) return new AvailabilityReport(0, 0, 0);
 
         var available = 0;
+        var unreachable = 0;
         using var limiter = new SemaphoreSlim(8, 8);
 
         var probes = sample.Select(async chunk =>
@@ -33,8 +38,12 @@ internal static class AvailabilityProbe
 
             try
             {
-                if (await source.ExistsAsync(chunk, plan.Manifest.FeatureLevel, cancellation).ConfigureAwait(false))
-                    Interlocked.Increment(ref available);
+                var presence = await source
+                    .ProbeAsync(chunk, plan.Manifest.FeatureLevel, cancellation)
+                    .ConfigureAwait(false);
+
+                if (presence == ChunkPresence.Present) Interlocked.Increment(ref available);
+                else if (presence == ChunkPresence.Unreachable) Interlocked.Increment(ref unreachable);
             }
             finally
             {
@@ -43,7 +52,7 @@ internal static class AvailabilityProbe
         });
 
         await Task.WhenAll(probes).ConfigureAwait(false);
-        return new AvailabilityReport(sample.Count, available);
+        return new AvailabilityReport(sample.Count, available, unreachable);
     }
 
     private static List<ChunkInfo> Sample(DownloadPlan plan, int sampleSize)

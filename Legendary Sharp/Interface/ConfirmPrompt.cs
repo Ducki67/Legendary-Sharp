@@ -17,6 +17,7 @@ internal sealed class ConfirmPrompt
     public static bool? Ask(string question, bool defaultValue = true)
     {
         if (!ConsoleEx.SupportsColor || !ConsoleEx.IsInteractive) return Fallback(question, defaultValue);
+        ConsoleEx.DiscardInput();
         return new ConfirmPrompt(question, defaultValue).Run();
     }
 

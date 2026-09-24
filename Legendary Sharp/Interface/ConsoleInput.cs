@@ -17,7 +17,7 @@ internal enum PointerAction
     Click
 }
 
-internal readonly record struct InputEvent(ConsoleKeyInfo Key, PointerAction Pointer, int Row)
+internal readonly record struct InputEvent(ConsoleKeyInfo Key, PointerAction Pointer, int Row, int Steps = 1)
 {
     public bool IsKey => Pointer == PointerAction.None;
 }
@@ -36,10 +36,12 @@ internal static partial class ConsoleInput
 
     private const uint MouseWheeled = 0x0004;
     private const uint LeftButton = 0x0001;
+    private const int WheelNotch = 120;
 
     private static nint _handle;
     private static uint _originalMode;
     private static bool _enabled;
+    private static int _wheel;
     private static PointerMode _mode = PointerMode.Full;
 
     public static bool ScrollAvailable => _enabled && _mode != PointerMode.Off;
@@ -83,26 +85,107 @@ internal static partial class ConsoleInput
             if (!ReadConsoleInput(_handle, out var record, 1, out var read) || read == 0)
                 return new InputEvent(Console.ReadKey(intercept: true), PointerAction.None, 0);
 
-            switch (record.EventType)
-            {
-                case KeyEventType when record.Key.KeyDown != 0:
-                    return new InputEvent(ToKeyInfo(record.Key), PointerAction.None, 0);
-
-                case MouseEventType when _mode != PointerMode.Off &&
-                                         record.Mouse.EventFlags == MouseWheeled:
-                    var delta = (short)(record.Mouse.ButtonState >> 16);
-                    if (delta == 0) continue;
-                    return new InputEvent(default,
-                        delta > 0 ? PointerAction.ScrollUp : PointerAction.ScrollDown,
-                        record.Mouse.Position.Y);
-
-                case MouseEventType when _mode == PointerMode.Full &&
-                                         record.Mouse.EventFlags == 0 &&
-                                         (record.Mouse.ButtonState & LeftButton) != 0:
-                    return new InputEvent(default, PointerAction.Click, record.Mouse.Position.Y);
-            }
+            if (Translate(record, out var input)) return input;
         }
     }
+
+    public static IDisposable SuspendSelection()
+    {
+        if (!OperatingSystem.IsWindows()) return SelectionScope.None;
+
+        var handle = GetStdHandle(StdInputHandle);
+        if (handle == nint.Zero || handle == -1 || !GetConsoleMode(handle, out var mode)) return SelectionScope.None;
+        if ((mode & EnableQuickEdit) == 0) return SelectionScope.None;
+
+        return SetConsoleMode(handle, (mode | EnableExtendedFlags) & ~EnableQuickEdit)
+            ? new SelectionScope(handle, mode)
+            : SelectionScope.None;
+    }
+
+    public static bool TryRead(out InputEvent input)
+    {
+        input = default;
+
+        if (!_enabled)
+        {
+            if (!KeyWaiting()) return false;
+            input = new InputEvent(Console.ReadKey(intercept: true), PointerAction.None, 0);
+            return true;
+        }
+
+        while (GetNumberOfConsoleInputEvents(_handle, out var pending) && pending > 0)
+        {
+            if (!ReadConsoleInput(_handle, out var record, 1, out var read) || read == 0) return false;
+            if (Translate(record, out input)) return true;
+        }
+
+        return false;
+    }
+
+    public static void Discard()
+    {
+        if (_enabled)
+        {
+            FlushConsoleInputBuffer(_handle);
+            return;
+        }
+
+        while (KeyWaiting()) Console.ReadKey(intercept: true);
+    }
+
+    private static bool KeyWaiting()
+    {
+        try
+        {
+            return Console.KeyAvailable;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    private static bool Translate(InputRecord record, out InputEvent input)
+    {
+        input = default;
+
+        switch (record.EventType)
+        {
+            case KeyEventType when record.Key.KeyDown != 0 && !IsModifier(record.Key.VirtualKeyCode):
+                input = new InputEvent(ToKeyInfo(record.Key), PointerAction.None, 0);
+                return true;
+
+            case MouseEventType when _mode != PointerMode.Off &&
+                                     record.Mouse.EventFlags == MouseWheeled:
+                var delta = (short)(record.Mouse.ButtonState >> 16);
+                if (delta == 0) return false;
+                if (Math.Sign(delta) != Math.Sign(_wheel)) _wheel = 0;
+
+                _wheel += delta;
+                var notches = _wheel / WheelNotch;
+                if (notches == 0) return false;
+
+                _wheel -= notches * WheelNotch;
+                input = new InputEvent(default,
+                    notches > 0 ? PointerAction.ScrollUp : PointerAction.ScrollDown,
+                    record.Mouse.Position.Y,
+                    Math.Abs(notches));
+                return true;
+
+            case MouseEventType when _mode == PointerMode.Full &&
+                                     record.Mouse.EventFlags == 0 &&
+                                     (record.Mouse.ButtonState & LeftButton) != 0:
+                input = new InputEvent(default, PointerAction.Click, record.Mouse.Position.Y);
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    private static bool IsModifier(ushort virtualKey) =>
+        virtualKey is 0x10 or 0x11 or 0x12 or 0x14 or 0x5B or 0x5C or 0x5D or 0x90 or 0x91
+            or >= 0xA0 and <= 0xA5;
 
     private static ConsoleKeyInfo ToKeyInfo(KeyEventRecord key)
     {
@@ -112,6 +195,19 @@ internal static partial class ConsoleInput
         var control = (state & 0x000C) != 0;
 
         return new ConsoleKeyInfo((char)key.UnicodeChar, (ConsoleKey)key.VirtualKeyCode, shift, alt, control);
+    }
+
+    private sealed class SelectionScope(nint handle, uint mode) : IDisposable
+    {
+        public static readonly IDisposable None = new SelectionScope(nint.Zero, 0);
+
+        private int _released;
+
+        public void Dispose()
+        {
+            if (handle == nint.Zero || Interlocked.Exchange(ref _released, 1) != 0) return;
+            SetConsoleMode(handle, mode);
+        }
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -163,4 +259,12 @@ internal static partial class ConsoleInput
     [LibraryImport("kernel32.dll", EntryPoint = "ReadConsoleInputW", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool ReadConsoleInput(nint handle, out InputRecord record, uint length, out uint read);
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool GetNumberOfConsoleInputEvents(nint handle, out uint count);
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool FlushConsoleInputBuffer(nint handle);
 }

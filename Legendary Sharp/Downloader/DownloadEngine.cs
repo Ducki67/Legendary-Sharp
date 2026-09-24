@@ -27,7 +27,7 @@ internal sealed class DownloadEngine(DownloadOptions options)
 
         using var abort = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         using var cache = new ChunkCache(plan.References, slots);
-        using var source = new ChunkSource(options.Mirrors, options.Workers, options.RequestTimeout, options.Attempts);
+        using var source = new ChunkSource(options.Mirrors, options.Workers, options.StallTimeout, options.Attempts);
 
         var channel = Channel.CreateBounded<ChunkInfo>(new BoundedChannelOptions(options.Workers)
         {
@@ -134,7 +134,7 @@ internal sealed class DownloadEngine(DownloadOptions options)
             catch (Exception error)
             {
                 cache.Abort(chunk.Guid, error);
-                if (!options.SkipMissing || error is OperationCanceledException) throw;
+                if (!Skippable(error)) throw;
             }
             finally
             {
@@ -178,8 +178,7 @@ internal sealed class DownloadEngine(DownloadOptions options)
 
         try
         {
-            await using var stream = new FileStream(target, FileMode.Create, FileAccess.Write, FileShare.None,
-                1 << 16, FileOptions.SequentialScan);
+            await using var stream = await OpenTargetAsync(target, file.FileName, cancellation).ConfigureAwait(false);
 
             if (file.Size > 0) stream.SetLength(file.Size);
             Volatile.Write(ref _currentFile, file.FileName);
@@ -202,7 +201,7 @@ internal sealed class DownloadEngine(DownloadOptions options)
 
             return null;
         }
-        catch (Exception error) when (options.SkipMissing && error is not OperationCanceledException)
+        catch (Exception error) when (Skippable(error))
         {
             for (var remaining = index; remaining < file.Parts.Length; remaining++)
                 cache.Release(file.Parts[remaining].Guid);
@@ -210,6 +209,25 @@ internal sealed class DownloadEngine(DownloadOptions options)
             return error;
         }
     }
+
+    private static async Task<FileStream> OpenTargetAsync(string target, string name, CancellationToken cancellation)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return new FileStream(target, FileMode.Create, FileAccess.Write, FileShare.None,
+                    1 << 16, FileOptions.SequentialScan);
+            }
+            catch (IOException error) when (FileLocks.IsLockViolation(error))
+            {
+                if (attempt >= 6) throw FileLocks.InUse(target, name, error);
+                await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt), cancellation).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private bool Skippable(Exception error) => options.SkipMissing && error is ChunkMissingException;
 
     private static void Delete(string path)
     {

@@ -24,7 +24,10 @@ internal sealed class ResumeLog : IDisposable
         var missing = 0;
         var changed = 0;
 
-        foreach (var line in File.ReadLines(_path))
+        using var stream = new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+
+        while (reader.ReadLine() is { } line)
         {
             var separator = line.IndexOf(':');
             if (separator <= 0) continue;

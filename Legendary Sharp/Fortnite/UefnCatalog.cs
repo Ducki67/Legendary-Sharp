@@ -30,12 +30,15 @@ internal sealed class UefnCatalog(IReadOnlyList<UefnRelease> releases)
         try
         {
             var payload = await source.GetAsync(FortniteConstants.UefnIndexUrl, cancellation).ConfigureAwait(false);
-            var text = Encoding.UTF8.GetString(payload);
-            Directory.CreateDirectory(paths.Cache);
-            await File.WriteAllTextAsync(cache, text, cancellation).ConfigureAwait(false);
-            return Parse(text);
+            var catalog = Parse(Encoding.UTF8.GetString(payload));
+
+            if (catalog.Releases.Count == 0 && info.Exists)
+                return Parse(await File.ReadAllTextAsync(cache, cancellation).ConfigureAwait(false));
+
+            AtomicFile.WriteAllBytes(cache, payload);
+            return catalog;
         }
-        catch (Exception) when (info.Exists)
+        catch (Exception error) when (info.Exists && error is not OperationCanceledException)
         {
             return Parse(await File.ReadAllTextAsync(cache, cancellation).ConfigureAwait(false));
         }

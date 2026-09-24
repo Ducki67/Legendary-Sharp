@@ -16,11 +16,10 @@ internal static class Bootstrap
         {
         }
 
-        using var cancellation = new CancellationTokenSource();
         Console.CancelKeyPress += (_, eventArgs) =>
         {
             eventArgs.Cancel = true;
-            cancellation.Cancel();
+            Interrupt.Signal();
         };
 
         if (!ConsoleEx.IsInteractive)
@@ -38,7 +37,7 @@ internal static class Bootstrap
             using var session = Session.Create();
             ConsoleEx.ApplyPointer(session.Settings.Pointer);
 
-            var code = await new InteractiveShell(session).RunAsync(cancellation.Token).ConfigureAwait(false);
+            var code = await new InteractiveShell(session).RunAsync().ConfigureAwait(false);
 
             ConsoleEx.Clear();
             Output.Blank();
@@ -56,6 +55,7 @@ internal static class Bootstrap
         {
             Output.Blank();
             Output.Error(error.Message);
+            if (ErrorLog.Write(error, "startup") is { } log) Output.Hint($"Details were saved to {log}");
 
             if (Environment.GetEnvironmentVariable("LGS_DEBUG") is not null)
                 Output.Detail(error.ToString());

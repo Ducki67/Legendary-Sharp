@@ -36,16 +36,23 @@ internal static class DownloadWorkflow
     {
         var manifest = request.Source.Manifest;
         var root = Path.GetFullPath(request.InstallRoot);
+
+        if (request.Tags is { Count: 0 })
+            throw new InvalidOperationException("No install tags were selected, so there is nothing to download.");
+
+        if (!ConfirmFolder(request, manifest, root))
+        {
+            Output.Hint("Cancelled.");
+            return 130;
+        }
+
         Directory.CreateDirectory(root);
 
         using var resume = ResumeLog.Open(InstallRecord.StateDirectory(root),
             request.IsAddon ? "uefn.txt" : "completed.txt");
         if (request.Fresh) resume.Clear();
 
-        if (request.Tags is { Count: 0 })
-            throw new InvalidOperationException("No install tags were selected, so there is nothing to download.");
-
-        var plan = BuildPlan(request, manifest, root, resume);
+        var plan = BuildPlan(request, manifest, root, resume, announce: true);
         var options = session.BuildDownloadOptions(root, request.Workers, request.CacheBudgetMiB);
 
         Summarise(request, plan, root, options);
@@ -76,6 +83,8 @@ internal static class DownloadWorkflow
 
         var availability = await ProbeAsync(session, plan, cancellation).ConfigureAwait(false);
 
+        if (availability.IsOffline) return 1;
+
         if (!availability.IsComplete)
         {
             if (availability.IsHopeless)
@@ -98,6 +107,8 @@ internal static class DownloadWorkflow
             }
         }
 
+        AnnounceQueue(session);
+
         if (!request.AssumeYes && ConsoleEx.IsInteractive)
         {
             Output.Blank();
@@ -108,48 +119,159 @@ internal static class DownloadWorkflow
             }
         }
 
+        var code = await ExecuteAsync(session, request, plan, resume, root,
+            options with { SkipMissing = skipMissing }, cancellation).ConfigureAwait(false);
+
+        if (code == 0 && !request.IsAddon && request.RepairFiles is null)
+            await UefnWorkflow.OfferAsync(session, root, manifest.BuildVersion, cancellation).ConfigureAwait(false);
+
+        return code;
+    }
+
+    private static async Task<int> ExecuteAsync(
+        Session session,
+        DownloadRequest request,
+        DownloadPlan plan,
+        ResumeLog resume,
+        string root,
+        DownloadOptions options,
+        CancellationToken cancellation)
+    {
+        var manifest = plan.Manifest;
+
+        using var lease = DownloadQueue.Join(session.Paths, new QueueTicket
+        {
+            Build = manifest.ShortVersion,
+            Folder = root,
+            Action = request.Action
+        });
+
+        if (!await QueueScreen.WaitForTurnAsync(lease, root, manifest.ShortVersion, cancellation).ConfigureAwait(false))
+        {
+            Output.Hint("Left the queue, nothing was downloaded.");
+            return 130;
+        }
+
+        if (lease.Waited && request.RepairFiles is null)
+        {
+            plan = BuildPlan(request, manifest, root, resume, announce: false);
+
+            if (plan.IsEmpty)
+            {
+                Output.Success("The other window already put every file this one needed in place.");
+                SaveRecord(request, root, plan, complete: true);
+                return 0;
+            }
+
+            Output.Info($"Rechecked the folder, {Format.Count(plan.Files.Count)} files " +
+                        $"({Format.Bytes(plan.DownloadSize)}) are still to download.");
+        }
+
         SaveRecord(request, root, plan, complete: false);
-
-        var engine = new DownloadEngine(options with { SkipMissing = skipMissing });
-
-        Output.Blank();
-        using var display = new ProgressDisplay(request.Action, manifest.ShortVersion);
+        lease.Start();
 
         DownloadResult result;
 
-        try
+        while (true)
         {
-            result = await engine
-                .RunAsync(plan, resume, progress => display.Update(progress), cancellation)
-                .ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            display.Finish();
+            var engine = new DownloadEngine(options);
+
             Output.Blank();
-            Output.Warn("Stopped. Run the same command again to pick up where it left off.");
-            return 130;
-        }
-        catch (Exception error)
-        {
-            display.Finish();
-            Output.Blank();
-            Output.Error(error.Message);
-            Output.Hint("Progress is saved, run the same command again to resume.");
-            return 1;
+            using var display = new ProgressDisplay(request.Action, manifest.ShortVersion);
+
+            try
+            {
+                result = await engine
+                    .RunAsync(plan, resume, progress =>
+                    {
+                        display.Update(progress);
+                        lease.Report(progress);
+                    }, cancellation)
+                    .ConfigureAwait(false);
+
+                display.Finish();
+                break;
+            }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+            {
+                display.Finish();
+                Output.Blank();
+                Output.Warn("Stopped, progress is saved.");
+                Output.Hint(ResumeHint(request));
+                return 130;
+            }
+            catch (ChunkMissingException) when (!options.SkipMissing && ConsoleEx.IsInteractive)
+            {
+                display.Finish();
+                Output.Blank();
+                Output.Warn("Part of this build turned out to be missing from Epic's CDN.");
+                Output.Detail("The availability check only samples the build, so a few pruned chunks can slip past it.");
+                Output.Blank();
+
+                if (Prompt.Ask("Carry on and list the files that cannot be downloaded?") != true)
+                {
+                    Output.Hint("Progress is saved. " + ResumeHint(request));
+                    return 1;
+                }
+
+                options = options with { SkipMissing = true };
+                if (request.RepairFiles is null) plan = BuildPlan(request, manifest, root, resume, announce: false);
+            }
+            catch (Exception error)
+            {
+                display.Finish();
+                Output.Blank();
+                Output.Error(error.Message);
+                Output.Hint("Progress is saved. " + ResumeHint(request));
+                if (ErrorLog.Write(error, $"{request.Action} {manifest.ShortVersion}") is { } log)
+                    Output.Hint($"Details were saved to {log}");
+                return 1;
+            }
         }
 
-        display.Finish();
+        lease.Dispose();
+
         SaveRecord(request, root, plan, complete: result.Failures.Count == 0);
         Report(result, root);
-
-        if (result.Failures.Count > 0) return 1;
-
-        if (!request.IsAddon && request.RepairFiles is null)
-            await UefnWorkflow.OfferAsync(session, root, manifest.BuildVersion, cancellation).ConfigureAwait(false);
-
-        return 0;
+        return result.Failures.Count > 0 ? 1 : 0;
     }
+
+    private static bool ConfirmFolder(DownloadRequest request, BuildManifest manifest, string root)
+    {
+        if (request.IsAddon || request.RepairFiles is not null) return true;
+
+        var existing = InstallRecord.TryLoad(root);
+        if (existing is null || existing.BuildVersion.Length == 0) return true;
+        if (existing.BuildVersion.Equals(manifest.BuildVersion, StringComparison.Ordinal)) return true;
+
+        Output.Blank();
+        Output.Warn($"This folder already holds {Naming.ShortenBuildVersion(existing.BuildVersion)}.");
+        Output.Detail($"Downloading {manifest.ShortVersion} into it overwrites shared files and leaves a mix of both.");
+        Output.Blank();
+        return Prompt.Ask("Download into this folder anyway?", false) == true;
+    }
+
+    private static void AnnounceQueue(Session session)
+    {
+        var others = DownloadQueue.Others(session.Paths);
+        if (others.Count == 0) return;
+
+        var running = others[0].Ticket;
+
+        Output.Blank();
+        Output.Info(running is null
+            ? "Another window is downloading right now, this one will queue behind it."
+            : $"Another window is downloading {running.Build} right now, this one will queue behind it.");
+
+        if (others.Count > 1) Output.Detail($"{others.Count - 1} more already waiting.");
+    }
+
+    private static string ResumeHint(DownloadRequest request) =>
+        request.RepairFiles is not null
+            ? "Run Repair again from My builds to finish it."
+            : request.IsAddon
+                ? "Run Install UEFN again from My builds to carry on."
+                : "Pick Resume download in My builds to carry on from here.";
 
     public static async Task<AvailabilityReport> ProbeAsync(
         Session session,
@@ -168,13 +290,23 @@ internal static class DownloadWorkflow
 
         if (report.Sampled == 0) return report;
 
-        if (report.IsComplete)
+        if (report.IsOffline)
         {
-            Output.Success($"All {report.Sampled} sampled chunks are still on the CDN.");
+            Output.Error("Could not reach any of Epic's CDN mirrors, so nothing can be downloaded right now.");
+            Output.Hint("Check your connection, a VPN or firewall can also block them.");
             return report;
         }
 
-        Output.Warn($"Only {Format.Percent(report.Fraction)} of a {report.Sampled} chunk sample is still hosted.");
+        if (report.Unreachable > 0)
+            Output.Detail($"{report.Unreachable} of the {report.Sampled} sampled chunks got no answer and were left out.");
+
+        if (report.IsComplete)
+        {
+            Output.Success($"All {report.Checked} sampled chunks are still on the CDN.");
+            return report;
+        }
+
+        Output.Warn($"Only {Format.Percent(report.Fraction)} of a {report.Checked} chunk sample is still hosted.");
         Output.Detail("Epic removes chunks for old builds, so part of this build can no longer be downloaded.");
         return report;
     }
@@ -183,14 +315,15 @@ internal static class DownloadWorkflow
         DownloadRequest request,
         BuildManifest manifest,
         string root,
-        ResumeLog resume)
+        ResumeLog resume,
+        bool announce)
     {
         if (request.RepairFiles is not null)
             return DownloadPlanner.CreateForFiles(manifest, request.RepairFiles, request.Tags ?? []);
 
         var scan = request.Fresh ? default : resume.Scan(manifest, root);
 
-        if (scan.HasProgress)
+        if (announce && scan.HasProgress)
         {
             Output.Info($"Resuming: {Format.Count(scan.Completed.Count)} files already downloaded.");
             if (scan.Missing > 0) Output.Detail($"{scan.Missing} recorded files are gone and will be fetched again.");

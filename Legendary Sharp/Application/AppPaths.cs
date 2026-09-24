@@ -7,6 +7,7 @@ internal sealed class AppPaths
         Root = root;
         Cache = Path.Combine(root, "cache");
         Manifests = Path.Combine(Cache, "manifests");
+        Queue = Path.Combine(root, "queue");
         SettingsFile = Path.Combine(root, "settings.json");
     }
 
@@ -15,6 +16,8 @@ internal sealed class AppPaths
     public string Cache { get; }
 
     public string Manifests { get; }
+
+    public string Queue { get; }
 
     public string SettingsFile { get; }
 

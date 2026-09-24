@@ -36,7 +36,7 @@ internal sealed class InteractiveShell(Session session)
         Back
     }
 
-    public async Task<int> RunAsync(CancellationToken cancellation)
+    public async Task<int> RunAsync()
     {
         while (true)
         {
@@ -46,13 +46,15 @@ internal sealed class InteractiveShell(Session session)
             {
                 new(MainAction.Download, "Download a build", "pick a version and pull it from the CDN"),
                 new(MainAction.Library, "My builds", "verify, repair, resume or add UEFN to what is installed"),
-                new(MainAction.Browse, "Browse releases", "every known build from polynite/fn-releases"),
-                new(MainAction.Settings, "Settings", "install folder, workers, default preset"),
+                new(MainAction.Browse, "Browse releases", "every known build across the manifest archives"),
+                new(MainAction.Settings, "Settings", "install folder, workers, default preset, mouse"),
                 new(MainAction.Quit, "Quit", string.Empty)
             };
 
             if (!SelectionList<MainAction>.TryPick("What would you like to do?", choices, out var action))
                 return 0;
+
+            var cancellation = Interrupt.Begin();
 
             try
             {
@@ -84,6 +86,7 @@ internal sealed class InteractiveShell(Session session)
             {
                 Output.Blank();
                 Output.Error(error.Message);
+                if (ErrorLog.Write(error, action.ToString()) is { } log) Output.Hint($"Details were saved to {log}");
                 ConsoleEx.PauseForKey("Press any key to go back.");
             }
         }
@@ -313,18 +316,18 @@ internal sealed class InteractiveShell(Session session)
         {
             Output.Blank();
             Output.Info("No builds found yet.");
-            Output.Hint(session.Settings.InstallRoot.Length == 0
-                ? "Set an install folder in Settings first."
-                : $"Looked in {session.Settings.InstallRoot}");
+            Output.Hint($"Looked in {string.Join(", ", session.Settings.ScanRoots())}");
             ConsoleEx.PauseForKey("Press any key to go back.");
             return;
         }
+
+        var queue = DownloadQueue.Others(session.Paths);
 
         var choices = builds
             .Select(build => new Choice<InstalledBuild>(
                 build,
                 Naming.ShortenBuildVersion(build.Record.BuildVersion),
-                $"{Format.Bytes(build.Record.InstallSize)}  {build.Status}  {build.Path}"))
+                $"{Format.Bytes(build.Record.InstallSize)}  {Status(build, queue)}  {build.Path}"))
             .ToList();
 
         if (!SelectionList<InstalledBuild>.TryPick("Which build?", choices, out var chosen)) return;
@@ -354,6 +357,9 @@ internal sealed class InteractiveShell(Session session)
                 Output.Pair("Folder", chosen.Path);
                 break;
 
+            case BuildAction.Verify or BuildAction.Repair when IsBusy(chosen):
+                break;
+
             case BuildAction.Verify:
             {
                 var build = await InstalledBuildLoader.OpenAsync(session, chosen.Path, cancellation)
@@ -379,7 +385,7 @@ internal sealed class InteractiveShell(Session session)
                 {
                     Source = build.Source,
                     InstallRoot = build.Root,
-                    Tags = build.Record.InstallTags
+                    Tags = build.Record.InstallTags.Count > 0 ? build.Record.InstallTags : null
                 }, cancellation).ConfigureAwait(false);
 
                 break;
@@ -387,6 +393,24 @@ internal sealed class InteractiveShell(Session session)
         }
 
         ConsoleEx.PauseForKey("Press any key to go back to the menu.");
+    }
+
+    private static string Status(InstalledBuild build, IReadOnlyList<QueueEntry> queue)
+    {
+        var index = queue.ToList().FindIndex(entry => entry.Ticket?.IsFor(build.Path) == true);
+        if (index < 0) return build.Status;
+        return index == 0 ? "downloading in another window" : "queued in another window";
+    }
+
+    private bool IsBusy(InstalledBuild build)
+    {
+        var ticket = DownloadQueue.Busy(session.Paths, build.Path);
+        if (ticket is null) return false;
+
+        Output.Blank();
+        Output.Warn($"Another window is working on this folder right now ({ticket.Action.ToLowerInvariant()} of {ticket.Build}).");
+        Output.Hint("Checking it now would hash files that are still being written. Try again once that finishes.");
+        return true;
     }
 
     private async Task BrowseAsync(CancellationToken cancellation)

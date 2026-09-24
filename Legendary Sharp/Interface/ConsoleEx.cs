@@ -136,6 +136,13 @@ internal static partial class ConsoleEx
 
     public static InputEvent ReadInput() => ConsoleInput.Read();
 
+    public static bool TryReadInput(out InputEvent input) => ConsoleInput.TryRead(out input);
+
+    public static void DiscardInput()
+    {
+        if (IsInteractive) ConsoleInput.Discard();
+    }
+
     public static void ApplyPointer(PointerMode mode)
     {
         if (IsInteractive) ConsoleInput.Apply(mode);
@@ -156,9 +163,10 @@ internal static partial class ConsoleEx
     public static void PauseForKey(string message)
     {
         if (!IsInteractive) return;
-        ConsoleEx.WriteLine();
-        ConsoleEx.WriteLine("  " + Theme.Paint(message, Theme.Muted));
-        Console.ReadKey(intercept: true);
+        WriteLine();
+        WriteLine(Output.Indent + Theme.Paint(message, Theme.Muted));
+        ConsoleInput.Discard();
+        ReadKey();
     }
 
     private static int SafeWidth()
