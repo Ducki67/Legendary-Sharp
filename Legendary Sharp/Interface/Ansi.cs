@@ -16,6 +16,8 @@ internal static class Ansi
     public const string ClearScreen = "\u001b[2J\u001b[H";
     public const string ClearBelow = "\u001b[0J";
     public const string LineStart = "\r";
+    public const string EnterAppScreen = "\u001b[?1049h";
+    public const string LeaveAppScreen = "\u001b[?1049l";
 
     public static string Foreground(Color color) => $"\u001b[38;2;{color.R};{color.G};{color.B}m";
 

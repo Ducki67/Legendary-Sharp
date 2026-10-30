@@ -15,4 +15,9 @@ internal readonly record struct DownloadProgress(
     double WriteBytesPerSecond,
     TimeSpan Elapsed,
     TimeSpan Eta,
-    string CurrentFile);
+    string CurrentFile,
+    int WorkerLimit = 0,
+    string Easing = "")
+{
+    public double Fraction => TotalDownloadBytes > 0 ? (double)DownloadedBytes / TotalDownloadBytes : 0d;
+}

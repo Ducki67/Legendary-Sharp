@@ -7,6 +7,8 @@ namespace Legendary_Sharp.Fortnite;
 
 internal sealed class ReleaseCatalog(IReadOnlyList<ReleaseEntry> entries, DateTime retrieved)
 {
+    private const string ManifestHost = "raw.githubusercontent.com";
+
     public IReadOnlyList<ReleaseEntry> Entries { get; } = entries;
 
     public DateTime Retrieved { get; } = retrieved;
@@ -14,7 +16,8 @@ internal sealed class ReleaseCatalog(IReadOnlyList<ReleaseEntry> entries, DateTi
     public IReadOnlyList<string> Seasons { get; } =
         [.. entries.Select(entry => entry.Season).Distinct(StringComparer.Ordinal)];
 
-    public IEnumerable<ReleaseEntry> Downloadable => Entries.Where(entry => entry.HasManifest);
+    public IEnumerable<ReleaseEntry> Downloadable =>
+        Entries.Where(entry => entry.HasManifest && !VerifiedBuilds.IsUnavailable(entry.Version));
 
     public static async Task<ReleaseCatalog> LoadAsync(
         ChunkSource source,
@@ -88,7 +91,9 @@ internal sealed class ReleaseCatalog(IReadOnlyList<ReleaseEntry> entries, DateTi
             if (byVersion.TryGetValue(entry.Version, out var index))
             {
                 if (!merged[index].HasManifest && entry.HasManifest)
-                    merged[index] = merged[index] with { ManifestId = entry.ManifestId };
+                    merged[index] = merged[index] with { ManifestId = entry.ManifestId, ManifestUrl = entry.ManifestUrl };
+                else if (merged[index].ManifestUrl.Length == 0 && entry.ManifestId == merged[index].ManifestId)
+                    merged[index] = merged[index] with { ManifestUrl = entry.ManifestUrl };
                 continue;
             }
 
@@ -156,6 +161,9 @@ internal sealed class ReleaseCatalog(IReadOnlyList<ReleaseEntry> entries, DateTi
         if (manifest.Length == 0) manifest = Column("Manifest ID");
         if (manifest.Contains('/') || manifest.Contains('[')) manifest = string.Empty;
 
+        var link = cells.Select(ManifestLink).FirstOrDefault(url => url.Length > 0) ?? string.Empty;
+        if (manifest.Length == 0 && link.Length > 0) manifest = Path.GetFileNameWithoutExtension(new Uri(link).AbsolutePath);
+
         return new ReleaseEntry
         {
             Season = SeasonFor(season, version),
@@ -164,8 +172,25 @@ internal sealed class ReleaseCatalog(IReadOnlyList<ReleaseEntry> entries, DateTi
             NetCl = Column("Net CL"),
             BuildDate = Column("Build date"),
             ManifestId = manifest,
+            ManifestUrl = link,
             Notes = Column("Notes")
         };
+    }
+
+    private static string ManifestLink(string cell)
+    {
+        var start = cell.IndexOf("](https://", StringComparison.Ordinal);
+        if (start < 0) return string.Empty;
+
+        var end = cell.IndexOf(')', start);
+        if (end < 0) return string.Empty;
+
+        var url = cell[(start + 2)..end];
+        return Uri.TryCreate(url, UriKind.Absolute, out var uri)
+               && uri.Host.Equals(ManifestHost, StringComparison.OrdinalIgnoreCase)
+               && uri.AbsolutePath.EndsWith(".manifest", StringComparison.OrdinalIgnoreCase)
+            ? url
+            : string.Empty;
     }
 
     private static string SeasonFor(string heading, string version)

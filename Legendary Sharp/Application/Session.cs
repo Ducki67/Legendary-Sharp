@@ -13,6 +13,7 @@ internal sealed class Session : IDisposable
         Paths = paths;
         Settings = settings;
         Http = http;
+        Downloads = new DownloadManager(this);
     }
 
     public AppPaths Paths { get; }
@@ -20,6 +21,8 @@ internal sealed class Session : IDisposable
     public AppSettings Settings { get; }
 
     public ChunkSource Http { get; }
+
+    public DownloadManager Downloads { get; }
 
     public static Session Create()
     {
@@ -65,5 +68,9 @@ internal sealed class Session : IDisposable
             SkipMissing = skipMissing
         };
 
-    public void Dispose() => Http.Dispose();
+    public void Dispose()
+    {
+        Downloads.Dispose();
+        Http.Dispose();
+    }
 }

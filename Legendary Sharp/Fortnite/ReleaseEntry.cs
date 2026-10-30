@@ -14,6 +14,8 @@ internal sealed record ReleaseEntry
 
     public string ManifestId { get; init; } = string.Empty;
 
+    public string ManifestUrl { get; init; } = string.Empty;
+
     public string Notes { get; init; } = string.Empty;
 
     public bool HasManifest => ManifestId.Length > 0;

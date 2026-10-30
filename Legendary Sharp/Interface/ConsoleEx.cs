@@ -10,6 +10,8 @@ internal static partial class ConsoleEx
 
     private static readonly Lock Gate = new();
 
+    private static bool _appScreen;
+
     public static bool SupportsColor { get; private set; }
 
     public static bool IsInteractive { get; private set; }
@@ -119,6 +121,20 @@ internal static partial class ConsoleEx
         if (SupportsColor) Write(Ansi.ShowCursor);
     }
 
+    public static void EnterAppScreen()
+    {
+        if (!SupportsColor || !IsInteractive || _appScreen) return;
+        _appScreen = true;
+        Write(Ansi.EnterAppScreen);
+    }
+
+    public static void LeaveAppScreen()
+    {
+        if (!_appScreen) return;
+        _appScreen = false;
+        Write(Ansi.Reset + Ansi.LeaveAppScreen);
+    }
+
     public static void Clear()
     {
         if (SupportsColor) Write(Ansi.ClearScreen);
@@ -157,6 +173,20 @@ internal static partial class ConsoleEx
         catch (IOException)
         {
             return 0;
+        }
+    }
+
+    public static int RowsBelowCursor()
+    {
+        if (!IsInteractive) return Height;
+
+        try
+        {
+            return Math.Max(1, Console.WindowHeight - (Console.CursorTop - Console.WindowTop));
+        }
+        catch (IOException)
+        {
+            return Height;
         }
     }
 

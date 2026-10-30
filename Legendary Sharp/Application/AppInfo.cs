@@ -13,7 +13,7 @@ internal static class AppInfo
 
     public const string Credit = "Manifest archives by polynite, VastBlast and Mast3rGamers";
 
-    public const string Repository = "";
+    public const string Repository = "https://github.com/Ducki67/Legendary-Sharp";
 
     public static readonly string Version = Resolve();
 

@@ -1,0 +1,11 @@
+{
+  "profiles": [
+    {
+      "name": "Legendary C#",
+      "commandline": "%LOCALAPPDATA%\\Programs\\LegendarySharp\\LegendarySharp.exe",
+      "icon": "%LOCALAPPDATA%\\Programs\\LegendarySharp\\LegendarySharp.ico",
+      "startingDirectory": "%USERPROFILE%",
+      "tabTitle": "Legendary C#"
+    }
+  ]
+}

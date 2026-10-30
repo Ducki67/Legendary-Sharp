@@ -16,6 +16,8 @@ internal sealed class TextInput
     private int _caret;
     private int _renderedLines;
     private string? _error;
+    private bool _selected;
+    private ConsoleKeyInfo? _pending;
 
     private TextInput(string label, string? initial, string? fallback, Func<string, string?>? validate,
         bool completePaths, string hint)
@@ -26,10 +28,11 @@ internal sealed class TextInput
         _completePaths = completePaths;
         _hint = hint;
 
-        if (initial is not null)
+        if (!string.IsNullOrEmpty(initial))
         {
             _value.Append(initial);
             _caret = initial.Length;
+            _selected = true;
         }
     }
 
@@ -56,7 +59,8 @@ internal sealed class TextInput
             while (true)
             {
                 Render();
-                var key = ConsoleEx.ReadKey();
+                var key = _pending ?? ConsoleEx.ReadKey();
+                _pending = null;
 
                 if (key.Key != ConsoleKey.Tab) _candidate = -1;
 
@@ -76,22 +80,30 @@ internal sealed class TextInput
                     }
 
                     case ConsoleKey.Tab when _completePaths:
+                        _selected = false;
                         Complete();
                         continue;
 
                     case ConsoleKey.LeftArrow:
-                        _caret = Math.Max(0, _caret - 1);
+                        _caret = _selected ? 0 : Math.Max(0, _caret - 1);
+                        _selected = false;
                         continue;
                     case ConsoleKey.RightArrow:
-                        _caret = Math.Min(_value.Length, _caret + 1);
+                        _caret = _selected ? _value.Length : Math.Min(_value.Length, _caret + 1);
+                        _selected = false;
                         continue;
                     case ConsoleKey.Home:
                         _caret = 0;
+                        _selected = false;
                         continue;
                     case ConsoleKey.End:
                         _caret = _value.Length;
+                        _selected = false;
                         continue;
 
+                    case ConsoleKey.Backspace or ConsoleKey.Delete when _selected:
+                        ClearValue();
+                        continue;
                     case ConsoleKey.Backspace when _caret > 0:
                         _value.Remove(--_caret, 1);
                         _error = null;
@@ -102,24 +114,92 @@ internal sealed class TextInput
                         continue;
                 }
 
-                if (key.Modifiers.HasFlag(ConsoleModifiers.Control) && key.Key == ConsoleKey.U)
+                if (IsShortcut(key))
                 {
-                    _value.Clear();
-                    _caret = 0;
-                    _error = null;
+                    switch (key.Key)
+                    {
+                        case ConsoleKey.U:
+                            ClearValue();
+                            break;
+                        case ConsoleKey.A:
+                            _selected = _value.Length > 0;
+                            break;
+                        case ConsoleKey.V when Clipboard.ReadText() is { } pasted:
+                            Insert(pasted);
+                            break;
+                    }
+
                     continue;
                 }
 
                 if (char.IsControl(key.KeyChar)) continue;
 
-                _value.Insert(_caret++, key.KeyChar);
-                _error = null;
+                Insert(ReadBurst(key.KeyChar));
             }
         }
         finally
         {
             ConsoleEx.ShowCursor();
         }
+    }
+
+    private string ReadBurst(char first)
+    {
+        var burst = new StringBuilder().Append(first);
+
+        while (ConsoleEx.TryReadInput(out var next))
+        {
+            if (!next.IsKey) continue;
+
+            if (char.IsControl(next.Key.KeyChar) || IsShortcut(next.Key))
+            {
+                _pending = next.Key;
+                break;
+            }
+
+            burst.Append(next.Key.KeyChar);
+        }
+
+        return burst.ToString();
+    }
+
+    private void Insert(string text)
+    {
+        text = text.Replace("\r", string.Empty).Replace("\n", string.Empty);
+        if (text.Length == 0) return;
+
+        var fullPath = _completePaths && IsFullPath(text);
+        if (fullPath) text = text.Trim().Trim('"');
+
+        if (_selected || fullPath)
+        {
+            _value.Clear();
+            _caret = 0;
+        }
+
+        _selected = false;
+        _value.Insert(_caret, text);
+        _caret += text.Length;
+        _error = null;
+    }
+
+    private void ClearValue()
+    {
+        _value.Clear();
+        _caret = 0;
+        _selected = false;
+        _error = null;
+    }
+
+    private static bool IsShortcut(ConsoleKeyInfo key) =>
+        key.Modifiers.HasFlag(ConsoleModifiers.Control) && !key.Modifiers.HasFlag(ConsoleModifiers.Alt);
+
+    private static bool IsFullPath(string text)
+    {
+        var path = text.Trim().TrimStart('"');
+        if (path.Length < 3) return false;
+        if (path.StartsWith(@"\\", StringComparison.Ordinal)) return true;
+        return char.IsAsciiLetter(path[0]) && path[1] == ':' && path[2] is '\\' or '/';
     }
 
     private string Current()
@@ -197,6 +277,10 @@ internal sealed class TextInput
             lines.Add(Output.Indent + Theme.Paint("  " + _error, Theme.Danger));
         else if (_candidate >= 0 && _candidates.Length > 1)
             lines.Add(Output.Indent + Theme.Paint($"  match {_candidate + 1} of {_candidates.Length}", Theme.Cyan));
+        else if (_selected)
+            lines.Add(Output.Indent + Theme.Paint(_completePaths
+                ? "  type, paste or drag a folder here to change it"
+                : "  type to change it", Theme.Cyan));
         else if (_fallback is not null && text.Length == 0)
             lines.Add(Output.Indent + Theme.Paint("  empty keeps " + _fallback, Theme.Muted));
         else
@@ -210,6 +294,11 @@ internal sealed class TextInput
     private string Field(string text, int width)
     {
         var visible = Format.TruncateStart(text, width);
+
+        if (_selected)
+            return new StyledLine().Add("│ ", Theme.Accent).Build() +
+                   new StyledLine().Add(visible, Theme.Text, bold: true).Build(Theme.Highlight);
+
         var caret = Math.Clamp(_caret - (text.Length - visible.Length), 0, visible.Length);
         var line = new StyledLine().Add("│ ", Theme.Accent);
 

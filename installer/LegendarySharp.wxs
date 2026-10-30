@@ -1,0 +1,78 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Legendary C#"
+           Manufacturer="Ducki67"
+           Version="$(Version)"
+           UpgradeCode="1b5b1b6b-eaa8-45d2-9346-d0184695f0ed"
+           Scope="perUser"
+           Compressed="yes">
+
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of Legendary C# is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="AppIcon" SourceFile="$(Assets)\LegendarySharp.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/Ducki67/Legendary-Sharp" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="LegendarySharp" />
+      </Directory>
+      <Directory Id="MicrosoftFolder" Name="Microsoft">
+        <Directory Id="TerminalFolder" Name="Windows Terminal">
+          <Directory Id="FragmentsFolder" Name="Fragments">
+            <Directory Id="FragmentFolder" Name="LegendarySharp" />
+          </Directory>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder" />
+    <StandardDirectory Id="DesktopFolder" />
+
+    <ComponentGroup Id="Product">
+      <Component Id="App" Guid="3701e86c-bea8-4649-aa96-743300a24b0a" Directory="INSTALLFOLDER">
+        <File Id="AppExe" Source="$(Publish)\LegendarySharp.exe" KeyPath="no">
+          <CopyFile Id="CommandLegendary" DestinationName="legendary#.exe" />
+          <CopyFile Id="CommandShort" DestinationName="L#.exe" />
+          <CopyFile Id="CommandSharp" DestinationName="Lsharp.exe" />
+        </File>
+        <File Id="AppIconFile" Source="$(Assets)\LegendarySharp.ico" KeyPath="no" />
+        <Environment Id="Path" Name="PATH" Value="[INSTALLFOLDER]" Part="last" Action="set" System="no" />
+        <RegistryValue Root="HKCU" Key="Software\Ducki67\LegendarySharp" Name="InstallFolder"
+                       Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+        <RemoveFolder Id="RemoveInstall" Directory="INSTALLFOLDER" On="uninstall" />
+        <RemoveFolder Id="RemovePrograms" Directory="ProgramsFolder" On="uninstall" />
+      </Component>
+
+      <Component Id="Terminal" Guid="4a7ec7b1-446d-497e-916d-a2b4e96647a7" Directory="FragmentFolder">
+        <File Id="TerminalProfile" Name="LegendarySharp.json" Source="$(Installer)\terminal.json" KeyPath="no" />
+        <RegistryValue Root="HKCU" Key="Software\Ducki67\LegendarySharp" Name="TerminalProfile"
+                       Type="integer" Value="1" KeyPath="yes" />
+        <RemoveFolder Id="RemoveFragment" Directory="FragmentFolder" On="uninstall" />
+        <RemoveFolder Id="RemoveFragments" Directory="FragmentsFolder" On="uninstall" />
+        <RemoveFolder Id="RemoveTerminal" Directory="TerminalFolder" On="uninstall" />
+        <RemoveFolder Id="RemoveMicrosoft" Directory="MicrosoftFolder" On="uninstall" />
+      </Component>
+
+      <Component Id="StartMenu" Guid="8ef5c802-4ffe-47c9-a5eb-1ee99c672be5" Directory="ProgramMenuFolder">
+        <Shortcut Id="StartMenuShortcut" Name="Legendary C#" Description="Fortnite build downloader"
+                  Target="[INSTALLFOLDER]LegendarySharp.exe" WorkingDirectory="INSTALLFOLDER" Icon="AppIcon" />
+        <RegistryValue Root="HKCU" Key="Software\Ducki67\LegendarySharp" Name="StartMenu"
+                       Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+
+      <Component Id="Desktop" Guid="c2d6f0a4-5b8e-4f1d-9a37-6e2b4c8d1f95" Directory="DesktopFolder">
+        <Shortcut Id="DesktopShortcut" Name="Legendary C#" Description="Fortnite build downloader"
+                  Target="[INSTALLFOLDER]LegendarySharp.exe" WorkingDirectory="INSTALLFOLDER" Icon="AppIcon" />
+        <RegistryValue Root="HKCU" Key="Software\Ducki67\LegendarySharp" Name="Desktop"
+                       Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <Feature Id="Main">
+      <ComponentGroupRef Id="Product" />
+    </Feature>
+  </Package>
+</Wix>

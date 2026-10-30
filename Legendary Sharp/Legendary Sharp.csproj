@@ -13,8 +13,9 @@
     <IsAotCompatible>true</IsAotCompatible>
     <ServerGarbageCollection>true</ServerGarbageCollection>
     <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
-    <Version>1.0.0</Version>
+    <Version>1.0.4</Version>
     <Product>Legendary Sharp</Product>
+    <ApplicationIcon>..\assets\LegendarySharp.ico</ApplicationIcon>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
   </PropertyGroup>
 

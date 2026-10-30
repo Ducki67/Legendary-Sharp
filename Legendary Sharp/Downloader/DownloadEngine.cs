@@ -15,14 +15,17 @@ internal sealed class DownloadEngine(DownloadOptions options)
     private int _chunksDone;
     private int _activeWorkers;
     private string _currentFile = string.Empty;
+    private Throttle _throttle = null!;
 
     public async Task<DownloadResult> RunAsync(
         DownloadPlan plan,
         ResumeLog resume,
         Action<DownloadProgress> onProgress,
-        CancellationToken cancellation)
+        CancellationToken cancellation,
+        Throttle? throttle = null)
     {
         var started = DateTime.UtcNow;
+        _throttle = throttle ?? new Throttle(options.Workers);
         var slots = ResolveSlots(plan, options);
 
         using var abort = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
@@ -123,6 +126,16 @@ internal sealed class DownloadEngine(DownloadOptions options)
     {
         await foreach (var chunk in reader.ReadAllAsync(cancellation).ConfigureAwait(false))
         {
+            try
+            {
+                await _throttle.WaitAsync(cancellation).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException error)
+            {
+                cache.Abort(chunk.Guid, error);
+                throw;
+            }
+
             Interlocked.Increment(ref _activeWorkers);
 
             try
@@ -139,6 +152,7 @@ internal sealed class DownloadEngine(DownloadOptions options)
             finally
             {
                 Interlocked.Decrement(ref _activeWorkers);
+                _throttle.Release();
             }
         }
     }
@@ -290,7 +304,9 @@ internal sealed class DownloadEngine(DownloadOptions options)
             _diskRate.PerSecond,
             elapsed,
             eta,
-            Volatile.Read(ref _currentFile));
+            Volatile.Read(ref _currentFile),
+            _throttle.Limit,
+            _throttle.Reason);
     }
 
     private void EnsureDirectory(string? directory)

@@ -59,13 +59,7 @@ internal static class Logo
         Output.Indent + Credit()
     ];
 
-    private static string Credit()
-    {
-        var credit = Theme.Paint(Application.AppInfo.Credit, Theme.Muted);
-        return Application.AppInfo.Repository.Length == 0
-            ? credit
-            : credit + Theme.Paint("   ·   " + Application.AppInfo.Repository, Theme.Muted);
-    }
+    private static string Credit() => Theme.Paint(Application.AppInfo.Credit, Theme.Muted);
 
     private static string Underline(LogoArt art)
     {

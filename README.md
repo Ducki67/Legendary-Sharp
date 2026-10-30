@@ -1,4 +1,4 @@
-
+<img src="assets/icon.png" alt="Legendary C# icon" width="128" align="right">
 
 # Legendary C#
 
@@ -10,28 +10,46 @@ built for pulling old builds from Epic's CDN.
 
 
 
-- Single 7.5 MB native exe, no install, no dependencies
+- Single 8 MB native exe with no dependencies, or a small installer that adds it to your terminal
 - Reads both manifest formats, binary and the pre-2021 JSON ones
 - Arrow key menu with mouse scrolling and click to pick, no commands to learn
 - Install tag picker with real sizes, so a full build is one keypress
 - Tells you up front how much of an old build Epic still hosts
 - Adds UEFN to any build from 24.20, matched by changelist
 - Resumes after a crash, verifies every chunk and file against the manifest
-- Run as many windows as you like, downloads queue up and take turns
+- Queue as many downloads as you like, they run in the background and ease off when your PC is busy
 
+
+## Install
+
+Grab `LegendarySharp-vX.Y.Z.msi` from the [releases](https://github.com/Ducki67/Legendary-Sharp/releases)
+and run it. No admin rights needed. It installs for your account only and adds:
+
+- the `legendary#`, `L#` and `Lsharp` commands to cmd and PowerShell
+- a **Legendary C#** entry in the Windows Terminal dropdown
+- Start menu and desktop shortcuts
+
+Running a newer msi updates it in place. Prefer no install? The plain `LegendarySharp-vX.Y.Z.exe` runs
+from anywhere.
 
 ## Use
 
-Double click `LegendarySharp.exe`. Everything is in the menu:
+Run `L#` in a terminal or double click `LegendarySharp.exe`. Everything is in the menu:
 
 | | |
 | --- | --- |
 | **Download a build** | Pick a season or jump straight to builds confirmed to download in full, choose how much of it you want, and go |
 | **My builds** | Verify, repair, resume an interrupted download, or add UEFN |
+| **Downloads** | Everything queued, running or finished, with pause, resume, reorder and cancel |
 | **Browse releases** | Every known build, type to filter, open one to check availability, read its manifest or download it |
 | **Settings** | Install folder, workers, memory budget, default preset, mouse and scrolling |
 
-Downloads go to `Documents\FortniteBuilds` unless you change the install root.
+Downloads go to `Documents\FortniteBuilds` unless you change the install root. The suggested folder is
+highlighted, so typing, pasting or dragging a folder in replaces it.
+
+Run it from a terminal inside a builds folder, any folder with "builds" in its path like
+`D:\FortniteBuilds\ch3`, and it goes straight to picking a build and downloads it into a folder named
+after the build right there.
 
 ## Install tags
 
@@ -49,8 +67,12 @@ json if you have one for that build era.
 
 ## Old builds
 
-Epic prunes chunks, so most builds below 13.40 will not download in full no matter what tags you use.
-Builds confirmed to complete are marked with a tick in the menu.
+Epic prunes chunks, so most old builds will not download in full no matter what tags you use. Every
+Windows build up to 23.50 was checked chunk by chunk against the CDN, and it is all or nothing: a build
+either downloads in full with any preset, or it is missing core files even on **Minimal**.
+
+The app knows the result for each build. Working ones get a tick in the menu, broken ones say how many
+files they will be missing. The full list is in [docs/BUILDS.md](docs/BUILDS.md).
 
 Open any build under **Browse releases** and choose **Check availability** to sample the CDN before
 committing. If part of it is gone you are offered the chance to take whatever survives, and told
@@ -62,12 +84,15 @@ Builds from 24.20 have a matching UEFN release, paired by changelist, installed 
 You are offered it after a download, or add it later from **My builds**. Turn the prompt off in
 **Settings**.
 
-## Several windows
+## Downloads
 
-Downloads started from different windows queue up instead of fighting over bandwidth and files. A
-waiting window shows what is downloading, how far along it is and your place in line, and starts by
-itself when its turn comes. Press esc to leave the queue. If two windows target the same folder, the
-second only fetches whatever the first did not already put in place.
+Starting a download adds it to **Downloads** and hands you back the menu, with a live status line on top.
+Queue as many as you like, they run one at a time. Pause, resume, reorder or cancel them from the
+Downloads screen, and close the app whenever, the queue is offered back next time you open it.
+
+While one runs it eases off when Fortnite is open, when other programs max out the CPU or when memory is
+nearly full, and speeds back up after. Turn that off in **Settings**. Downloads from other windows take
+turns with yours instead of fighting over bandwidth.
 
 ## Something went wrong
 

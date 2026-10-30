@@ -30,6 +30,8 @@ internal sealed class AppSettings
 
     [JsonPropertyName("mouse")] public string Mouse { get; set; } = MouseFull;
 
+    [JsonPropertyName("easeOff")] public bool EaseOff { get; set; } = true;
+
     [JsonIgnore] public PointerMode Pointer => Mouse switch
     {
         MouseScroll => PointerMode.Scroll,
@@ -93,6 +95,7 @@ internal sealed class AppSettings
         CatalogMaxAgeHours = defaults.CatalogMaxAgeHours;
         OfferUefn = defaults.OfferUefn;
         Mouse = defaults.Mouse;
+        EaseOff = defaults.EaseOff;
     }
 
     public void Save(AppPaths paths)

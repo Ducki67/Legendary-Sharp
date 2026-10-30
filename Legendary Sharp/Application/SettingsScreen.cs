@@ -14,6 +14,7 @@ internal sealed class SettingsScreen(Session session)
         Preset,
         CatalogAge,
         OfferUefn,
+        EaseOff,
         Mouse,
         Reset,
         Back
@@ -37,6 +38,8 @@ internal sealed class SettingsScreen(Session session)
                 new(Field.CatalogAge, "Release index max age", $"{settings.CatalogMaxAgeHours} hours"),
                 new(Field.OfferUefn, "Offer UEFN after a download",
                     settings.OfferUefn ? "yes, when a matching release exists" : "no, never ask"),
+                new(Field.EaseOff, "Ease off when the PC is busy",
+                    settings.EaseOff ? "yes, fewer workers while you play or the PC is loaded" : "no, always full speed"),
                 new(Field.Mouse, "Mouse and scrolling", DescribePointer(settings)),
                 new(Field.Reset, "Reset to defaults", "restore every setting"),
                 new(Field.Back, "Back", "return to the menu")
@@ -107,6 +110,10 @@ internal sealed class SettingsScreen(Session session)
 
             case Field.OfferUefn:
                 settings.OfferUefn = !settings.OfferUefn;
+                return true;
+
+            case Field.EaseOff:
+                settings.EaseOff = !settings.EaseOff;
                 return true;
 
             case Field.Mouse:

@@ -8,9 +8,12 @@ internal sealed class InteractiveShell(Session session)
 {
     private const string VerifiedOnly = "confirmed";
 
+    private readonly string? _here = LaunchFolder.Detect();
+
     private enum MainAction
     {
         Download,
+        Downloads,
         Library,
         Browse,
         Settings,
@@ -38,22 +41,28 @@ internal sealed class InteractiveShell(Session session)
 
     public async Task<int> RunAsync()
     {
+        try
+        {
+            await RestoreAsync(Interrupt.Begin()).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        var jump = _here is not null;
+
         while (true)
         {
             Header();
 
-            var choices = new List<Choice<MainAction>>
+            var action = MainAction.Download;
+            if (!jump && !PickMain(out action))
             {
-                new(MainAction.Download, "Download a build", "pick a version and pull it from the CDN"),
-                new(MainAction.Library, "My builds", "verify, repair, resume or add UEFN to what is installed"),
-                new(MainAction.Browse, "Browse releases", "every known build across the manifest archives"),
-                new(MainAction.Settings, "Settings", "install folder, workers, default preset, mouse"),
-                new(MainAction.Quit, "Quit", string.Empty)
-            };
+                if (ConfirmQuit()) return 0;
+                continue;
+            }
 
-            if (!SelectionList<MainAction>.TryPick("What would you like to do?", choices, out var action))
-                return 0;
-
+            jump = false;
             var cancellation = Interrupt.Begin();
 
             try
@@ -62,6 +71,9 @@ internal sealed class InteractiveShell(Session session)
                 {
                     case MainAction.Download:
                         await DownloadAsync(cancellation).ConfigureAwait(false);
+                        break;
+                    case MainAction.Downloads:
+                        await new DownloadsScreen(session).RunAsync(null, cancellation).ConfigureAwait(false);
                         break;
                     case MainAction.Library:
                         await LibraryAsync(cancellation).ConfigureAwait(false);
@@ -72,8 +84,6 @@ internal sealed class InteractiveShell(Session session)
                     case MainAction.Settings:
                         Settings();
                         break;
-                    case MainAction.Quit:
-                        return 0;
                 }
             }
             catch (OperationCanceledException)
@@ -92,15 +102,41 @@ internal sealed class InteractiveShell(Session session)
         }
     }
 
-    private static void Header()
+    public static void Header()
     {
         var lines = Logo.Lines(AppInfo.Tagline);
         lines.Add(string.Empty);
         ConsoleEx.Screen(lines);
     }
 
+    private bool PickMain(out MainAction action)
+    {
+        var download = _here is null
+            ? "pick a version and pull it from the CDN"
+            : $"pick a version, it goes into {_here}";
+
+        var choices = new List<Choice<MainAction>>
+        {
+            new(MainAction.Download, "Download a build", download),
+            new(MainAction.Downloads, "Downloads", DownloadsNote()),
+            new(MainAction.Library, "My builds", "verify, repair, resume or add UEFN to what is installed"),
+            new(MainAction.Browse, "Browse releases", "every known build across the manifest archives"),
+            new(MainAction.Settings, "Settings", "install folder, workers, default preset, mouse"),
+            new(MainAction.Quit, "Quit", string.Empty)
+        };
+
+        return SelectionList<MainAction>.TryPick("What would you like to do?", choices, out action, banner: Banner)
+               && action != MainAction.Quit;
+    }
+
     private async Task DownloadAsync(CancellationToken cancellation)
     {
+        if (_here is not null)
+        {
+            Output.Info($"New builds go into {_here}");
+            Output.Blank();
+        }
+
         var release = await PickReleaseAsync(cancellation).ConfigureAwait(false);
         if (release is null) return;
 
@@ -132,8 +168,165 @@ internal sealed class InteractiveShell(Session session)
             Tags = tags
         };
 
-        await DownloadWorkflow.RunAsync(session, request, cancellation).ConfigureAwait(false);
-        ConsoleEx.PauseForKey("Press any key to go back to the menu.");
+        await ShowQueuedAsync(await DownloadWorkflow.QueueAsync(session, request, cancellation).ConfigureAwait(false),
+            cancellation).ConfigureAwait(false);
+    }
+
+    private async Task ShowQueuedAsync(DownloadJob? job, CancellationToken cancellation)
+    {
+        if (job is null)
+        {
+            ConsoleEx.PauseForKey("Press any key to go back to the menu.");
+            return;
+        }
+
+        await new DownloadsScreen(session).RunAsync(job.Id, cancellation).ConfigureAwait(false);
+    }
+
+    private IReadOnlyList<string> Banner()
+    {
+        var jobs = session.Downloads.Snapshot();
+        if (jobs.Count == 0) return [];
+
+        var lines = new List<string>();
+        var running = jobs.FirstOrDefault(job => job.State == JobState.Running);
+        var queued = jobs.Count(job => job.State is JobState.Queued or JobState.Waiting);
+        var bar = Math.Clamp(ConsoleEx.Width - 60, 10, 28);
+
+        if (running is { Progress: { } progress })
+        {
+            lines.Add(Output.Indent + Theme.Emphasis("▌", Theme.Accent) + " " +
+                      Theme.Paint("Downloading ", Theme.Dim) + Theme.Emphasis(running.Title, Theme.Cyan) + "  " +
+                      Output.ProgressBar(progress.Fraction, bar) + "  " +
+                      Theme.Emphasis(Format.Percent(progress.Fraction), Theme.Text) +
+                      Theme.Paint($"  {Format.Duration(progress.Eta)} left", Theme.Muted));
+
+            var extra = new List<string>();
+            if (queued > 0) extra.Add(queued == 1 ? "1 more queued" : $"{queued} more queued");
+            if (progress.Easing.Length > 0) extra.Add($"eased off, {progress.Easing}");
+            if (extra.Count > 0) lines.Add(Output.Indent + Theme.Paint("  " + string.Join("  ·  ", extra), Theme.Muted));
+        }
+        else if (jobs.FirstOrDefault(job => job.State == JobState.Waiting) is { } waiting)
+        {
+            lines.Add(Output.Indent + Theme.Paint("◌ ", Theme.Muted) +
+                      Theme.Paint($"{waiting.Title} is waiting for another window to finish " +
+                                  $"{waiting.Blocker?.Build ?? "its download"}", Theme.Dim));
+        }
+        else if (running is not null || queued > 0)
+        {
+            lines.Add(Output.Indent + Theme.Paint("◌ ", Theme.Muted) + Theme.Paint("Starting the next download", Theme.Dim));
+        }
+
+        if (jobs.FirstOrDefault(job => job.State == JobState.NeedsAttention) is { } attention)
+            lines.Add(Output.Indent + Theme.Emphasis("! ", Theme.Warning) +
+                      Theme.Paint($"{attention.Title} needs you, part of it is missing. Open Downloads.", Theme.Warning));
+
+        if (jobs.FirstOrDefault(job => job.State == JobState.Failed) is { } failed)
+            lines.Add(Output.Indent + Theme.Emphasis("✗ ", Theme.Danger) +
+                      Theme.Paint($"{failed.Title} failed. Open Downloads to try again.", Theme.Danger));
+
+        var finished = jobs
+            .Where(job => job is { State: JobState.Done, Finished: { } at } && DateTime.UtcNow - at < TimeSpan.FromMinutes(30))
+            .MaxBy(job => job.Finished);
+
+        if (finished is not null)
+            lines.Add(Output.Indent + (finished.IsComplete
+                ? Theme.Emphasis("✓ ", Theme.Success) + Theme.Paint($"{finished.Title} finished", Theme.Success)
+                : Theme.Emphasis("! ", Theme.Warning) + Theme.Paint($"{finished.Title} finished with files missing", Theme.Warning)) +
+                (finished.Uefn is not null ? Theme.Paint("  ·  UEFN is available for it in Downloads", Theme.Cyan) : string.Empty));
+
+        var paused = jobs.Count(job => job.State == JobState.Paused);
+        if (paused > 0 && running is null)
+            lines.Add(Output.Indent + Theme.Paint("‖ ", Theme.Warning) +
+                      Theme.Paint(paused == 1 ? "1 download is paused" : $"{paused} downloads are paused", Theme.Dim));
+
+        if (lines.Count > 0) lines.Add(string.Empty);
+        return lines;
+    }
+
+    private string DownloadsNote()
+    {
+        var jobs = session.Downloads.Snapshot();
+        var active = jobs.Count(job => job.IsActive);
+        var paused = jobs.Count(job => job.State is JobState.Paused or JobState.NeedsAttention);
+
+        if (active == 0 && paused == 0)
+            return jobs.Count == 0 ? "watch, pause and reorder what is downloading" : "nothing running right now";
+
+        var parts = new List<string>();
+        if (active > 0) parts.Add(active == 1 ? "1 in the queue" : $"{active} in the queue");
+        if (paused > 0) parts.Add($"{paused} waiting on you");
+        return string.Join(", ", parts);
+    }
+
+    private bool ConfirmQuit()
+    {
+        var active = session.Downloads.Snapshot().Count(job => job.IsActive);
+        if (active == 0) return true;
+
+        Output.Blank();
+        Output.Warn(active == 1 ? "A download is still going." : $"{active} downloads are still going.");
+        Output.Hint("Progress is saved, and they are offered again the next time you open the app.");
+        Output.Blank();
+        return Prompt.Ask("Quit anyway?", false) == true;
+    }
+
+    private async Task RestoreAsync(CancellationToken cancellation)
+    {
+        var saved = QueueStore.TakeAbandoned(session.Paths);
+        if (saved.Count == 0) return;
+
+        Header();
+        Output.Section("Unfinished downloads");
+        Output.Info(saved.Count == 1
+            ? "A download was still queued when the app last closed."
+            : $"{saved.Count} downloads were still queued when the app last closed.");
+        Output.Blank();
+
+        foreach (var job in saved.Take(8)) Output.Bullet($"{job.Build}   {job.Root}");
+        if (saved.Count > 8) Output.Detail($"and {saved.Count - 8} more");
+
+        Output.Blank();
+        if (Prompt.Ask("Pick them back up?") != true) return;
+
+        foreach (var job in saved)
+        {
+            try
+            {
+                var source = await RestoreSourceAsync(job, cancellation).ConfigureAwait(false);
+
+                session.Downloads.Enqueue(DownloadWorkflow.CreateQuietly(session, new DownloadRequest
+                {
+                    Source = source,
+                    InstallRoot = job.Root,
+                    Tags = job.Tags,
+                    IsAddon = job.IsAddon,
+                    SkipMissing = job.SkipMissing
+                }));
+            }
+            catch (Exception error) when (error is not OperationCanceledException)
+            {
+                Output.Warn($"{job.Build} could not be picked back up: {error.Message}");
+                ErrorLog.Write(error, $"restore {job.Build}");
+            }
+        }
+    }
+
+    private async Task<ResolvedManifest> RestoreSourceAsync(SavedJob job, CancellationToken cancellation)
+    {
+        var stored = job.IsAddon ? InstallRecord.UefnManifestPath(job.Root) : InstallRecord.ManifestPath(job.Root);
+
+        if (File.Exists(stored))
+            return new ResolvedManifest(
+                await ManifestLoader.LoadFileAsync(stored, cancellation).ConfigureAwait(false),
+                job.ManifestId, "install folder", null);
+
+        using (Spinner.Start($"Reading the manifest for {job.Build}"))
+        {
+            return await ManifestResolver
+                .ResolveAsync(job.ManifestId, session.Http, session.Paths, null, cancellation)
+                .ConfigureAwait(false);
+        }
     }
 
     private async Task<ReleaseEntry?> PickReleaseAsync(CancellationToken cancellation)
@@ -202,7 +395,7 @@ internal sealed class InteractiveShell(Session session)
         var parts = new List<string>();
 
         if (entry.IsVerified) parts.Add("✓ confirmed complete");
-        else if (entry.IsKnownPatchy) parts.Add("! expect missing files");
+        else if (entry.IsKnownPatchy) parts.Add("! " + (VerifiedBuilds.MissingNote(entry.Version) ?? "expect missing files"));
 
         if (entry.BuildDate.Length > 0) parts.Add(entry.BuildDate);
         if (entry.EngineVersion.Length > 0) parts.Add("UE " + entry.EngineVersion);
@@ -297,12 +490,14 @@ internal sealed class InteractiveShell(Session session)
 
     private string? PickFolder(ReleaseEntry release, ResolvedManifest resolved)
     {
-        var root = session.Settings.EffectiveInstallRoot;
+        var root = _here ?? session.Settings.EffectiveInstallRoot;
 
         var suggestion = Path.Combine(root,
             Naming.SanitiseFolder(release.SuggestedFolderName.Length > 0
                 ? release.SuggestedFolderName
                 : resolved.Manifest.ShortVersion));
+
+        if (_here is not null) return suggestion;
 
         Output.Blank();
         return Prompt.Path("Install folder", suggestion);
@@ -322,12 +517,13 @@ internal sealed class InteractiveShell(Session session)
         }
 
         var queue = DownloadQueue.Others(session.Paths);
+        var mine = session.Downloads.Snapshot();
 
         var choices = builds
             .Select(build => new Choice<InstalledBuild>(
                 build,
                 Naming.ShortenBuildVersion(build.Record.BuildVersion),
-                $"{Format.Bytes(build.Record.InstallSize)}  {Status(build, queue)}  {build.Path}"))
+                $"{Format.Bytes(build.Record.InstallSize)}  {Status(build, queue, mine)}  {build.Path}"))
             .ToList();
 
         if (!SelectionList<InstalledBuild>.TryPick("Which build?", choices, out var chosen)) return;
@@ -369,41 +565,61 @@ internal sealed class InteractiveShell(Session session)
             }
 
             case BuildAction.Repair:
-                await RepairWorkflow.RunAsync(session, chosen.Path, cancellation).ConfigureAwait(false);
-                break;
+            {
+                var job = await RepairWorkflow.RunAsync(session, chosen.Path, cancellation).ConfigureAwait(false);
+                if (job is null) break;
+                await ShowQueuedAsync(job, cancellation).ConfigureAwait(false);
+                return;
+            }
 
             case BuildAction.Uefn:
-                await UefnWorkflow.InstallForBuildAsync(session, chosen.Path, cancellation).ConfigureAwait(false);
-                break;
+                await ShowQueuedAsync(
+                    await UefnWorkflow.InstallForBuildAsync(session, chosen.Path, cancellation).ConfigureAwait(false),
+                    cancellation).ConfigureAwait(false);
+                return;
 
             case BuildAction.Resume:
             {
                 var build = await InstalledBuildLoader.OpenAsync(session, chosen.Path, cancellation)
                     .ConfigureAwait(false);
 
-                await DownloadWorkflow.RunAsync(session, new DownloadRequest
+                await ShowQueuedAsync(await DownloadWorkflow.QueueAsync(session, new DownloadRequest
                 {
                     Source = build.Source,
                     InstallRoot = build.Root,
                     Tags = build.Record.InstallTags.Count > 0 ? build.Record.InstallTags : null
-                }, cancellation).ConfigureAwait(false);
+                }, cancellation).ConfigureAwait(false), cancellation).ConfigureAwait(false);
 
-                break;
+                return;
             }
         }
 
         ConsoleEx.PauseForKey("Press any key to go back to the menu.");
     }
 
-    private static string Status(InstalledBuild build, IReadOnlyList<QueueEntry> queue)
+    private static string Status(InstalledBuild build, IReadOnlyList<QueueEntry> queue, IReadOnlyList<JobView> mine)
     {
+        if (mine.FirstOrDefault(job => job.IsActive && SameFolder(job.Root, build.Path)) is { } job)
+            return job.State == JobState.Running ? "downloading now" : "in your downloads";
+
         var index = queue.ToList().FindIndex(entry => entry.Ticket?.IsFor(build.Path) == true);
         if (index < 0) return build.Status;
         return index == 0 ? "downloading in another window" : "queued in another window";
     }
 
+    private static bool SameFolder(string left, string right) =>
+        string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), StringComparison.OrdinalIgnoreCase);
+
     private bool IsBusy(InstalledBuild build)
     {
+        if (session.Downloads.Holds(build.Path))
+        {
+            Output.Blank();
+            Output.Warn("This build is in your downloads right now.");
+            Output.Hint("Checking it now would hash files that are still being written. Try again once it finishes.");
+            return true;
+        }
+
         var ticket = DownloadQueue.Busy(session.Paths, build.Path);
         if (ticket is null) return false;
 
@@ -469,7 +685,9 @@ internal sealed class InteractiveShell(Session session)
                 .Row("Status", entry.IsVerified
                     ? "confirmed to download in full"
                     : entry.IsKnownPatchy
-                        ? "Epic has pruned chunks, expect gaps"
+                        ? VerifiedBuilds.MissingNote(entry.Version) is { } note
+                            ? $"Epic has pruned chunks, {note} whatever tags you pick"
+                            : "Epic has pruned chunks, expect gaps"
                         : "not confirmed either way, run a check");
 
             if (entry.BuildDate.Length > 0) panel.Row("Build date", entry.BuildDate);

@@ -58,7 +58,8 @@ internal static class DownloadQueue
         return lease;
     }
 
-    public static IReadOnlyList<QueueEntry> Others(AppPaths paths) => Snapshot(paths, null, null);
+    public static IReadOnlyList<QueueEntry> Others(AppPaths paths) =>
+        [.. Snapshot(paths, null, null).Where(entry => entry.Ticket?.ProcessId != Environment.ProcessId)];
 
     public static QueueTicket? Busy(AppPaths paths, string folder) =>
         Others(paths).Select(entry => entry.Ticket).FirstOrDefault(ticket => ticket?.IsFor(folder) == true);

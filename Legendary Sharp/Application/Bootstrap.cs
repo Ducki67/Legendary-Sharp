@@ -32,6 +32,8 @@ internal static class Bootstrap
             return 2;
         }
 
+        ConsoleEx.EnterAppScreen();
+
         try
         {
             using var session = Session.Create();
@@ -39,20 +41,20 @@ internal static class Bootstrap
 
             var code = await new InteractiveShell(session).RunAsync().ConfigureAwait(false);
 
-            ConsoleEx.Clear();
-            Output.Blank();
-            Output.Line(Theme.Paint("Thanks for using " + AppInfo.Name + ".", Theme.Muted));
-            Output.Blank();
+            ConsoleEx.LeaveAppScreen();
+            Output.Line(Theme.Paint("Thanks for using " + AppInfo.Name + " v" + AppInfo.Version + ", made by " + AppInfo.Author + ".", Theme.Muted));
+            Output.Line(Theme.Paint(AppInfo.Repository, Theme.Dim));
             return code;
         }
         catch (OperationCanceledException)
         {
-            Output.Blank();
+            ConsoleEx.LeaveAppScreen();
             Output.Warn("Cancelled.");
             return 130;
         }
         catch (Exception error)
         {
+            ConsoleEx.LeaveAppScreen();
             Output.Blank();
             Output.Error(error.Message);
             if (ErrorLog.Write(error, "startup") is { } log) Output.Hint($"Details were saved to {log}");
@@ -65,6 +67,7 @@ internal static class Bootstrap
         }
         finally
         {
+            ConsoleEx.LeaveAppScreen();
             ConsoleEx.ShowCursor();
             ConsoleInput.Restore();
         }

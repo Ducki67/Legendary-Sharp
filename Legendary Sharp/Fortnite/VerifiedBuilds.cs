@@ -7,14 +7,13 @@ internal static class VerifiedBuilds
 
     private static readonly HashSet<string> Changelists = new(StringComparer.Ordinal)
     {
-        "14113327", "14835335", "15685441", "17468642", "17661844",
-        "17745267", "17792290", "17811397", "17882303",
-        "20696680", "21035704", "20978394", "21657658", "22600409", "23070899",
         "40567068"
     };
 
     public static bool IsVerified(string version)
     {
+        if (Survey(version) is { } missing) return missing.All(count => count == 0);
+
         var changelist = Changelist(version);
         if (changelist.Length > 0 && Changelists.Contains(changelist)) return true;
 
@@ -24,12 +23,42 @@ internal static class VerifiedBuilds
 
     public static bool IsKnownPatchy(string version)
     {
-        if (IsVerified(version)) return false;
+        if (Survey(version) is { } missing) return missing.Any(count => count > 0);
+        if (IsVerified(version) || IsOtherPlatform(version)) return false;
 
         var (major, minor) = Parse(version);
-        if (major <= 0) return false;
+        return major > 0 && (major < 13 || (major == 13 && minor < 40));
+    }
 
-        return major < 13 || (major == 13 && minor < 40);
+    public static string? MissingNote(string version)
+    {
+        if (Survey(version) is not { } missing || missing.All(count => count == 0)) return null;
+
+        var (fewest, most) = (missing.Min(), missing.Max());
+        return fewest == most ? $"{Files(most)} missing" : $"{fewest} to {Files(most)} missing";
+    }
+
+    public static int? MissingFor(string version, string preset) => BuildSurvey.MissingFor(SurveyKey(version), preset);
+
+    public static bool IsUnavailable(string version) => BuildSurvey.IsUnavailable(SurveyKey(version));
+
+    private static int[]? Survey(string version) => BuildSurvey.Find(SurveyKey(version));
+
+    private static string SurveyKey(string version)
+    {
+        var marker = version.IndexOf("-CL-", StringComparison.OrdinalIgnoreCase);
+        return marker < 0 ? string.Empty : version[(marker + 4)..];
+    }
+
+    private static string Files(int files) => files == 1 ? "1 file" : $"{files} files";
+
+    private static bool IsOtherPlatform(string version)
+    {
+        var changelist = Changelist(version);
+        if (changelist.Length == 0) return false;
+
+        var end = version.IndexOf(changelist, StringComparison.Ordinal) + changelist.Length;
+        return version[end..].Any(char.IsLetter);
     }
 
     private static string Changelist(string version)

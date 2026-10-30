@@ -32,7 +32,16 @@ internal sealed record DownloadRequest
 
 internal static class DownloadWorkflow
 {
-    public static async Task<int> RunAsync(Session session, DownloadRequest request, CancellationToken cancellation)
+    public static async Task<DownloadJob?> QueueAsync(Session session, DownloadRequest request, CancellationToken cancellation)
+    {
+        var job = await PrepareAsync(session, request, cancellation).ConfigureAwait(false);
+        if (job is null) return null;
+
+        session.Downloads.Enqueue(job);
+        return job;
+    }
+
+    public static async Task<DownloadJob?> PrepareAsync(Session session, DownloadRequest request, CancellationToken cancellation)
     {
         var manifest = request.Source.Manifest;
         var root = Path.GetFullPath(request.InstallRoot);
@@ -40,19 +49,29 @@ internal static class DownloadWorkflow
         if (request.Tags is { Count: 0 })
             throw new InvalidOperationException("No install tags were selected, so there is nothing to download.");
 
+        if (session.Downloads.Holds(root))
+        {
+            Output.Blank();
+            Output.Warn("This folder is already in your downloads.");
+            Output.Hint("Open Downloads to see it, or pick another folder.");
+            return null;
+        }
+
         if (!ConfirmFolder(request, manifest, root))
         {
             Output.Hint("Cancelled.");
-            return 130;
+            return null;
         }
 
         Directory.CreateDirectory(root);
 
-        using var resume = ResumeLog.Open(InstallRecord.StateDirectory(root),
-            request.IsAddon ? "uefn.txt" : "completed.txt");
-        if (request.Fresh) resume.Clear();
+        DownloadPlan plan;
+        using (var resume = ResumeLog.Open(InstallRecord.StateDirectory(root), request.IsAddon ? "uefn.txt" : "completed.txt"))
+        {
+            if (request.Fresh) resume.Clear();
+            plan = BuildPlan(request, manifest, root, resume, announce: true);
+        }
 
-        var plan = BuildPlan(request, manifest, root, resume, announce: true);
         var options = session.BuildDownloadOptions(root, request.Workers, request.CacheBudgetMiB);
 
         Summarise(request, plan, root, options);
@@ -62,28 +81,30 @@ internal static class DownloadWorkflow
             Output.Blank();
             Output.Success("Nothing to do, every selected file is already in place.");
             SaveRecord(request, root, plan, complete: true);
-            return 0;
+            return null;
         }
 
         if (!HasRoomOnDisk(root, plan, out var free))
         {
             Output.Blank();
             Output.Error($"Not enough free space: {Format.Bytes(plan.WriteSize)} needed, {Format.Bytes(free)} available.");
-            return 1;
+            return null;
         }
 
         var skipMissing = request.SkipMissing;
 
-        if (!request.IsAddon && VerifiedBuilds.IsKnownPatchy(manifest.ShortVersion))
+        if (!request.IsAddon && VerifiedBuilds.IsKnownPatchy(request.Source.Release?.Version ?? manifest.ShortVersion))
         {
             Output.Blank();
-            Output.Warn("Builds this old are usually missing chunks whatever tags you pick.");
-            Output.Detail("Nothing below 13.40 is known to download in full.");
+            Output.Warn(KnownMissing(request, manifest) is { } files
+                ? $"Epic no longer hosts all of this build, {files} {(files == 1 ? "file" : "files")} will be missing with these tags."
+                : "Epic no longer hosts all of this build, it will be missing files whatever tags you pick.");
+            Output.Detail("Only the builds marked confirmed complete download in full, see docs/BUILDS.md.");
         }
 
         var availability = await ProbeAsync(session, plan, cancellation).ConfigureAwait(false);
 
-        if (availability.IsOffline) return 1;
+        if (availability.IsOffline) return null;
 
         if (!availability.IsComplete)
         {
@@ -91,7 +112,7 @@ internal static class DownloadWorkflow
             {
                 Output.Blank();
                 Output.Error("None of the sampled chunks are on Epic's CDN any more, this build cannot be downloaded.");
-                return 1;
+                return null;
             }
 
             if (!skipMissing)
@@ -102,138 +123,39 @@ internal static class DownloadWorkflow
                 if (!skipMissing)
                 {
                     Output.Hint("Cancelled.");
-                    return 130;
+                    return null;
                 }
             }
         }
 
-        AnnounceQueue(session);
+        var busy = AnnounceQueue(session);
 
         if (!request.AssumeYes && ConsoleEx.IsInteractive)
         {
             Output.Blank();
-            if (Prompt.Ask($"Start the {request.Action.ToLowerInvariant()}?") != true)
+            var question = busy
+                ? $"Add the {request.Action.ToLowerInvariant()} to your downloads?"
+                : $"Start the {request.Action.ToLowerInvariant()}?";
+
+            if (Prompt.Ask(question) != true)
             {
                 Output.Hint("Cancelled.");
-                return 130;
+                return null;
             }
         }
 
-        var code = await ExecuteAsync(session, request, plan, resume, root,
-            options with { SkipMissing = skipMissing }, cancellation).ConfigureAwait(false);
-
-        if (code == 0 && !request.IsAddon && request.RepairFiles is null)
-            await UefnWorkflow.OfferAsync(session, root, manifest.BuildVersion, cancellation).ConfigureAwait(false);
-
-        return code;
+        return new DownloadJob(request, root, plan, options with { SkipMissing = skipMissing });
     }
 
-    private static async Task<int> ExecuteAsync(
-        Session session,
-        DownloadRequest request,
-        DownloadPlan plan,
-        ResumeLog resume,
-        string root,
-        DownloadOptions options,
-        CancellationToken cancellation)
+    public static DownloadJob CreateQuietly(Session session, DownloadRequest request)
     {
-        var manifest = plan.Manifest;
+        var root = Path.GetFullPath(request.InstallRoot);
+        Directory.CreateDirectory(root);
 
-        using var lease = DownloadQueue.Join(session.Paths, new QueueTicket
-        {
-            Build = manifest.ShortVersion,
-            Folder = root,
-            Action = request.Action
-        });
-
-        if (!await QueueScreen.WaitForTurnAsync(lease, root, manifest.ShortVersion, cancellation).ConfigureAwait(false))
-        {
-            Output.Hint("Left the queue, nothing was downloaded.");
-            return 130;
-        }
-
-        if (lease.Waited && request.RepairFiles is null)
-        {
-            plan = BuildPlan(request, manifest, root, resume, announce: false);
-
-            if (plan.IsEmpty)
-            {
-                Output.Success("The other window already put every file this one needed in place.");
-                SaveRecord(request, root, plan, complete: true);
-                return 0;
-            }
-
-            Output.Info($"Rechecked the folder, {Format.Count(plan.Files.Count)} files " +
-                        $"({Format.Bytes(plan.DownloadSize)}) are still to download.");
-        }
-
-        SaveRecord(request, root, plan, complete: false);
-        lease.Start();
-
-        DownloadResult result;
-
-        while (true)
-        {
-            var engine = new DownloadEngine(options);
-
-            Output.Blank();
-            using var display = new ProgressDisplay(request.Action, manifest.ShortVersion);
-
-            try
-            {
-                result = await engine
-                    .RunAsync(plan, resume, progress =>
-                    {
-                        display.Update(progress);
-                        lease.Report(progress);
-                    }, cancellation)
-                    .ConfigureAwait(false);
-
-                display.Finish();
-                break;
-            }
-            catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
-            {
-                display.Finish();
-                Output.Blank();
-                Output.Warn("Stopped, progress is saved.");
-                Output.Hint(ResumeHint(request));
-                return 130;
-            }
-            catch (ChunkMissingException) when (!options.SkipMissing && ConsoleEx.IsInteractive)
-            {
-                display.Finish();
-                Output.Blank();
-                Output.Warn("Part of this build turned out to be missing from Epic's CDN.");
-                Output.Detail("The availability check only samples the build, so a few pruned chunks can slip past it.");
-                Output.Blank();
-
-                if (Prompt.Ask("Carry on and list the files that cannot be downloaded?") != true)
-                {
-                    Output.Hint("Progress is saved. " + ResumeHint(request));
-                    return 1;
-                }
-
-                options = options with { SkipMissing = true };
-                if (request.RepairFiles is null) plan = BuildPlan(request, manifest, root, resume, announce: false);
-            }
-            catch (Exception error)
-            {
-                display.Finish();
-                Output.Blank();
-                Output.Error(error.Message);
-                Output.Hint("Progress is saved. " + ResumeHint(request));
-                if (ErrorLog.Write(error, $"{request.Action} {manifest.ShortVersion}") is { } log)
-                    Output.Hint($"Details were saved to {log}");
-                return 1;
-            }
-        }
-
-        lease.Dispose();
-
-        SaveRecord(request, root, plan, complete: result.Failures.Count == 0);
-        Report(result, root);
-        return result.Failures.Count > 0 ? 1 : 0;
+        using var resume = ResumeLog.Open(InstallRecord.StateDirectory(root), request.IsAddon ? "uefn.txt" : "completed.txt");
+        var plan = BuildPlan(request, request.Source.Manifest, root, resume, announce: false);
+        var options = session.BuildDownloadOptions(root, request.Workers, request.CacheBudgetMiB);
+        return new DownloadJob(request, root, plan, options with { SkipMissing = request.SkipMissing });
     }
 
     private static bool ConfirmFolder(DownloadRequest request, BuildManifest manifest, string root)
@@ -251,27 +173,25 @@ internal static class DownloadWorkflow
         return Prompt.Ask("Download into this folder anyway?", false) == true;
     }
 
-    private static void AnnounceQueue(Session session)
+    private static bool AnnounceQueue(Session session)
     {
+        var mine = session.Downloads.Snapshot().Count(job => job.IsActive);
         var others = DownloadQueue.Others(session.Paths);
-        if (others.Count == 0) return;
-
-        var running = others[0].Ticket;
+        if (mine == 0 && others.Count == 0) return false;
 
         Output.Blank();
-        Output.Info(running is null
-            ? "Another window is downloading right now, this one will queue behind it."
-            : $"Another window is downloading {running.Build} right now, this one will queue behind it.");
 
-        if (others.Count > 1) Output.Detail($"{others.Count - 1} more already waiting.");
+        if (mine > 0)
+            Output.Info(mine == 1
+                ? "Something is already downloading, this joins the queue behind it."
+                : $"{mine} downloads are already lined up, this joins the queue behind them.");
+        else
+            Output.Info(others[0].Ticket is { } running
+                ? $"Another window is downloading {running.Build}, this joins the queue behind it."
+                : "Another window is downloading, this joins the queue behind it.");
+
+        return true;
     }
-
-    private static string ResumeHint(DownloadRequest request) =>
-        request.RepairFiles is not null
-            ? "Run Repair again from My builds to finish it."
-            : request.IsAddon
-                ? "Run Install UEFN again from My builds to carry on."
-                : "Pick Resume download in My builds to carry on from here.";
 
     public static async Task<AvailabilityReport> ProbeAsync(
         Session session,
@@ -311,7 +231,7 @@ internal static class DownloadWorkflow
         return report;
     }
 
-    private static DownloadPlan BuildPlan(
+    public static DownloadPlan BuildPlan(
         DownloadRequest request,
         BuildManifest manifest,
         string root,
@@ -374,6 +294,20 @@ internal static class DownloadWorkflow
         return $"{tags.Count} of {available}: {string.Join(", ", names)}";
     }
 
+    private static int? KnownMissing(DownloadRequest request, BuildManifest manifest)
+    {
+        var groups = InstallTagCatalog.Summarise(manifest);
+        var chosen = new HashSet<string>(request.Tags ?? TagPresets.Intersect(TagPresets.Full.Resolve(groups), manifest),
+            StringComparer.Ordinal);
+
+        var preset = TagPresets.All.FirstOrDefault(preset =>
+            chosen.SetEquals(TagPresets.Intersect(preset.Resolve(groups), manifest)));
+
+        return preset is null
+            ? null
+            : VerifiedBuilds.MissingFor(request.Source.Release?.Version ?? manifest.ShortVersion, preset.Key);
+    }
+
     private static bool HasRoomOnDisk(string root, DownloadPlan plan, out long free)
     {
         free = long.MaxValue;
@@ -392,7 +326,7 @@ internal static class DownloadWorkflow
         return free >= plan.WriteSize;
     }
 
-    private static void SaveRecord(DownloadRequest request, string root, DownloadPlan plan, bool complete)
+    public static void SaveRecord(DownloadRequest request, string root, DownloadPlan plan, bool complete)
     {
         var manifest = plan.Manifest;
         var record = InstallRecord.TryLoad(root) ?? new InstallRecord();
@@ -439,7 +373,7 @@ internal static class DownloadWorkflow
         }
     }
 
-    private static void Report(DownloadResult result, string root)
+    public static void Report(DownloadResult result, string root)
     {
         Output.Blank();
 

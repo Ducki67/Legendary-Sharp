@@ -38,7 +38,8 @@ internal static class ManifestResolver
         if (manifestId.Length == 0 || manifestId.Any(Path.GetInvalidFileNameChars().Contains))
             throw new InvalidOperationException($"\"{reference}\" is not a build, a manifest id or an existing file.");
 
-        var (fetched, origin, failure) = await FetchAsync(manifestId, http, paths, cancellation).ConfigureAwait(false);
+        var (fetched, origin, failure) = await FetchAsync(manifestId, release?.ManifestUrl, http, paths, cancellation)
+            .ConfigureAwait(false);
 
         if (fetched is null)
             throw new InvalidOperationException(
@@ -50,6 +51,7 @@ internal static class ManifestResolver
 
     private static async Task<(BuildManifest? Manifest, string Origin, Exception? Failure)> FetchAsync(
         string manifestId,
+        string? link,
         ChunkSource http,
         AppPaths paths,
         CancellationToken cancellation)
@@ -75,6 +77,9 @@ internal static class ManifestResolver
             ($"{FortniteConstants.ArchiveManifestUrl}/{manifestId}.manifest", "VastBlast/FortniteManifestArchive"),
             ($"{FortniteConstants.UefnManifestUrl}/{manifestId}.manifest", "Mast3rGamers/UEFN-releases")
         };
+
+        if (link is { Length: > 0 } && candidates.All(candidate => candidate.Url != link))
+            candidates.Insert(0, (link, "release index link"));
 
         candidates.AddRange(FortniteConstants.CloudMirrors
             .Select(mirror => ($"{mirror}/{manifestId}.manifest", new Uri(mirror).Host)));

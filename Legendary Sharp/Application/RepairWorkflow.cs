@@ -4,12 +4,12 @@ namespace Legendary_Sharp.Application;
 
 internal static class RepairWorkflow
 {
-    public static async Task<int> RunAsync(Session session, string installRoot, CancellationToken cancellation)
+    public static async Task<DownloadJob?> RunAsync(Session session, string installRoot, CancellationToken cancellation)
     {
         var build = await InstalledBuildLoader.OpenAsync(session, installRoot, cancellation).ConfigureAwait(false);
         var report = await VerifyWorkflow.RunAsync(build, cancellation).ConfigureAwait(false);
 
-        if (report.IsHealthy) return 0;
+        if (report.IsHealthy) return null;
 
         var request = new DownloadRequest
         {
@@ -19,6 +19,6 @@ internal static class RepairWorkflow
             RepairFiles = report.NeedsRepair
         };
 
-        return await DownloadWorkflow.RunAsync(session, request, cancellation).ConfigureAwait(false);
+        return await DownloadWorkflow.QueueAsync(session, request, cancellation).ConfigureAwait(false);
     }
 }
