@@ -26,7 +26,7 @@ internal sealed class AppPaths
 
     public static AppPaths Create()
     {
-        var baseFolder = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var baseFolder = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.Create);
         if (string.IsNullOrEmpty(baseFolder)) baseFolder = AppContext.BaseDirectory;
 
         var paths = new AppPaths(Path.Combine(baseFolder, "LegendarySharp"));

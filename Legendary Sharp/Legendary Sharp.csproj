@@ -21,8 +21,12 @@
 
   <PropertyGroup>
     <PublishAfterBuild Condition="'$(PublishAfterBuild)' == ''">true</PublishAfterBuild>
-    <NativeRuntimeIdentifier Condition="'$(NativeRuntimeIdentifier)' == ''">win-x64</NativeRuntimeIdentifier>
-    <ReleaseFolder>$([System.IO.Path]::GetFullPath($(MSBuildProjectDirectory)\..\publish))</ReleaseFolder>
+    <IsWindowsHost>$([MSBuild]::IsOSPlatform('Windows'))</IsWindowsHost>
+    <NativeRuntimeIdentifier Condition="'$(NativeRuntimeIdentifier)' == '' And '$(IsWindowsHost)' == 'true'">win-x64</NativeRuntimeIdentifier>
+    <NativeRuntimeIdentifier Condition="'$(NativeRuntimeIdentifier)' == ''">linux-x64</NativeRuntimeIdentifier>
+    <NativeFileName Condition="'$(IsWindowsHost)' == 'true'">$(AssemblyName).exe</NativeFileName>
+    <NativeFileName Condition="'$(IsWindowsHost)' != 'true'">$(AssemblyName)</NativeFileName>
+    <ReleaseFolder>$([System.IO.Path]::GetFullPath($(MSBuildProjectDirectory)/../publish))</ReleaseFolder>
   </PropertyGroup>
 
   <Target Name="PublishNative" AfterTargets="Build"
@@ -32,9 +36,13 @@
                      And '$(_IsPublishing)' != 'true'">
 
     <PropertyGroup>
-      <NativeExe>$(OutputPath)$(NativeRuntimeIdentifier)\publish\$(AssemblyName).exe</NativeExe>
+      <NativeExe>$(OutputPath)$(NativeRuntimeIdentifier)\publish\$(NativeFileName)</NativeExe>
+      <NativeExe Condition="'$(IsWindowsHost)' != 'true'">$(OutputPath)$(NativeRuntimeIdentifier)/publish/$(NativeFileName)</NativeExe>
       <VsInstallerDir>$([System.Environment]::GetFolderPath(SpecialFolder.ProgramFilesX86))\Microsoft Visual Studio\Installer</VsInstallerDir>
-      <NativePublishCommand>set "PATH=%25PATH%25;$(VsInstallerDir)" &amp;&amp; dotnet publish "$(MSBuildProjectFullPath)" -c $(Configuration) -r $(NativeRuntimeIdentifier) -p:NativePublishPass=true -p:Version=$(Version) --nologo</NativePublishCommand>
+      <PublishPrefix Condition="'$(IsWindowsHost)' == 'true'">set "PATH=%25PATH%25;$(VsInstallerDir)" &amp;&amp; </PublishPrefix>
+      <NativePublishCommand>$(PublishPrefix)dotnet publish "$(MSBuildProjectFullPath)" -c $(Configuration) -r $(NativeRuntimeIdentifier) -p:NativePublishPass=true -p:Version=$(Version) --nologo</NativePublishCommand>
+      <NativePrerequisite Condition="'$(IsWindowsHost)' == 'true'">the Visual Studio C++ build tools</NativePrerequisite>
+      <NativePrerequisite Condition="'$(IsWindowsHost)' != 'true'">clang and the zlib development package</NativePrerequisite>
     </PropertyGroup>
 
     <Message Importance="high" Text="Release build finished, publishing the native single file exe..." />
@@ -59,13 +67,13 @@
 
     <Message Importance="high"
              Condition="'$(NativeExeLocked)' != 'true' And Exists('$(NativeExe)')"
-             Text="Native exe ready: $(ReleaseFolder)\$(AssemblyName).exe" />
+             Text="Native exe ready: $(ReleaseFolder)/$(NativeFileName)" />
 
     <Error Condition="'$(NativeExeLocked)' == 'true'"
            Text="$(NativeExe) is running, so the new exe could not be written. Close every LegendarySharp window and build again. Nothing in $(ReleaseFolder) was touched, so it still holds the previous build." />
 
     <Warning Condition="'$(NativeExeLocked)' != 'true' And !Exists('$(NativeExe)')"
-             Text="Skipped the native publish. It needs the Visual Studio C++ build tools. The managed build in $(OutputPath) is fine. Use -p:PublishAfterBuild=false to silence this." />
+             Text="Skipped the native publish. It needs $(NativePrerequisite). The managed build in $(OutputPath) is fine. Use -p:PublishAfterBuild=false to silence this." />
   </Target>
 
 </Project>
