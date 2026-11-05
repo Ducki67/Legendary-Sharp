@@ -59,6 +59,9 @@ internal sealed class AppSettings
         var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
         if (documents.Length > 0) return Path.Combine(documents, "FortniteBuilds");
 
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (home.Length > 0) return Path.Combine(home, "FortniteBuilds");
+
         var drives = DriveInfo.GetDrives()
             .Where(drive => drive is { IsReady: true, DriveType: DriveType.Fixed })
             .OrderByDescending(drive => drive.AvailableFreeSpace)
