@@ -5,6 +5,8 @@ namespace Legendary_Sharp.Downloader;
 
 internal sealed class DownloadEngine(DownloadOptions options)
 {
+    private const long CheckpointBytes = 128L << 20;
+
     private readonly RateMeter _networkRate = new(TimeSpan.FromSeconds(6));
     private readonly RateMeter _diskRate = new(TimeSpan.FromSeconds(6));
     private readonly HashSet<string> _createdDirectories = new(StringComparer.OrdinalIgnoreCase);
@@ -167,17 +169,18 @@ internal sealed class DownloadEngine(DownloadOptions options)
             EnsureDirectory(Path.GetDirectoryName(target));
             ClearReadOnly(target);
 
-            var failure = await WriteFileAsync(file, target, cache, cancellation).ConfigureAwait(false);
+            var failure = await WriteFileAsync(file, target, plan, cache, resume, cancellation).ConfigureAwait(false);
 
             if (failure is not null)
             {
-                _failures.Add(new FailedFile(file.FileName, failure.Message));
+                _failures.Add(new FailedFile(file.FileName, failure.Message, failure is ChunkMissingException));
                 Delete(target);
                 continue;
             }
 
             ApplyAttributes(target, file);
             resume.MarkComplete(file);
+            resume.ClearPartial();
             Interlocked.Increment(ref _filesDone);
         }
     }
@@ -185,34 +188,71 @@ internal sealed class DownloadEngine(DownloadOptions options)
     private async Task<Exception?> WriteFileAsync(
         FileEntry file,
         string target,
+        DownloadPlan plan,
         ChunkCache cache,
+        ResumeLog resume,
         CancellationToken cancellation)
     {
-        var index = 0;
+        var partial = plan.Partial is { } saved && saved.FileName == file.FileName ? saved : null;
+        var index = partial?.Parts ?? 0;
+        var doneParts = index;
+        var bytes = partial?.Bytes ?? 0;
+        var sinceCheckpoint = 0L;
 
         try
         {
-            await using var stream = await OpenTargetAsync(target, file.FileName, cancellation).ConfigureAwait(false);
+            if (partial is null) resume.SavePartial(file, 0, 0);
+
+            await using var stream = await OpenTargetAsync(
+                target, file.FileName, partial is null ? FileMode.Create : FileMode.OpenOrCreate, cancellation)
+                .ConfigureAwait(false);
 
             if (file.Size > 0) stream.SetLength(file.Size);
+            stream.Position = bytes;
             Volatile.Write(ref _currentFile, file.FileName);
 
-            for (; index < file.Parts.Length; index++)
+            try
             {
-                var part = file.Parts[index];
-                var data = await cache.WaitAsync(part.Guid).ConfigureAwait(false);
+                for (; index < file.Parts.Length; index++)
+                {
+                    var part = file.Parts[index];
+                    var data = await cache.WaitAsync(part.Guid).ConfigureAwait(false);
 
-                if (part.Offset + (long)part.Size > data.Length)
-                    throw new InvalidDataException(
-                        $"Chunk {part.Guid.ToHex()} is smaller than \"{file.FileName}\" expects.");
+                    if (part.Offset + (long)part.Size > data.Length)
+                        throw new InvalidDataException(
+                            $"Chunk {part.Guid.ToHex()} is smaller than \"{file.FileName}\" expects.");
 
-                await stream.WriteAsync(data.AsMemory((int)part.Offset, (int)part.Size), cancellation)
-                    .ConfigureAwait(false);
+                    await stream.WriteAsync(data.AsMemory((int)part.Offset, (int)part.Size), cancellation)
+                        .ConfigureAwait(false);
 
-                cache.Release(part.Guid);
-                Interlocked.Add(ref _writtenBytes, part.Size);
+                    cache.Release(part.Guid);
+                    Interlocked.Add(ref _writtenBytes, part.Size);
+                    bytes += part.Size;
+                    doneParts = index + 1;
+                    sinceCheckpoint += part.Size;
+
+                    if (sinceCheckpoint < CheckpointBytes || index + 1 >= file.Parts.Length) continue;
+
+                    stream.Flush(true);
+                    resume.SavePartial(file, doneParts, bytes);
+                    sinceCheckpoint = 0;
+                }
+            }
+            catch (Exception error) when (!Skippable(error))
+            {
+                try
+                {
+                    stream.Flush(true);
+                    resume.SavePartial(file, doneParts, bytes);
+                }
+                catch (IOException)
+                {
+                }
+
+                throw;
             }
 
+            stream.Flush(true);
             return null;
         }
         catch (Exception error) when (Skippable(error))
@@ -220,17 +260,18 @@ internal sealed class DownloadEngine(DownloadOptions options)
             for (var remaining = index; remaining < file.Parts.Length; remaining++)
                 cache.Release(file.Parts[remaining].Guid);
 
+            resume.ClearPartial();
             return error;
         }
     }
 
-    private static async Task<FileStream> OpenTargetAsync(string target, string name, CancellationToken cancellation)
+    private static async Task<FileStream> OpenTargetAsync(string target, string name, FileMode mode, CancellationToken cancellation)
     {
         for (var attempt = 1; ; attempt++)
         {
             try
             {
-                return new FileStream(target, FileMode.Create, FileAccess.Write, FileShare.None,
+                return new FileStream(target, mode, FileAccess.Write, FileShare.None,
                     1 << 16, FileOptions.SequentialScan);
             }
             catch (IOException error) when (FileLocks.IsLockViolation(error))
@@ -347,7 +388,7 @@ internal sealed class DownloadEngine(DownloadOptions options)
     }
 }
 
-internal readonly record struct FailedFile(string FileName, string Reason);
+internal readonly record struct FailedFile(string FileName, string Reason, bool NotHosted);
 
 internal readonly record struct DownloadResult(
     int Files,

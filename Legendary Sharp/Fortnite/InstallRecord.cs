@@ -32,9 +32,21 @@ internal sealed class InstallRecord
 
     [JsonPropertyName("uefnInstalledUtc")] public DateTime? UefnInstalledUtc { get; set; }
 
+    [JsonPropertyName("extended")] public bool Extended { get; set; }
+
+    [JsonPropertyName("adopted")] public bool Adopted { get; set; }
+
+    [JsonPropertyName("unavailable")] public List<string> Unavailable { get; set; } = [];
+
+    [JsonIgnore] public bool HasUnavailable => Unavailable.Count > 0;
+
     [JsonIgnore] public bool HasUefn => UefnInstalledUtc is not null;
 
     [JsonIgnore] public bool IsComplete => CompletedUtc is not null;
+
+    [JsonIgnore] public IReadOnlyList<string>? TagFilter => InstallTags.Count == 0 ? null : InstallTags;
+
+    public HashSet<string> UnavailableSet() => new(Unavailable, StringComparer.Ordinal);
 
     public static string StateDirectory(string installRoot) => Path.Combine(installRoot, FolderName);
 

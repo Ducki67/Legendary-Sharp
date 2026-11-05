@@ -16,7 +16,10 @@ built for pulling old builds from Epic's CDN.
 - Install tag picker with real sizes, so a full build is one keypress
 - Tells you up front how much of an old build Epic still hosts
 - Adds UEFN to any build from 24.20, matched by changelist
-- Resumes after a crash, verifies every chunk and file against the manifest
+- Resumes after a crash or pause, even in the middle of a file, and verifies every chunk and file against the manifest
+- Cancel removes only the files that download wrote
+- Add or remove install tags on a build you already have
+- Picks up builds you got elsewhere
 - Queue as many downloads as you like, they run in the background and ease off when your PC is busy
 
 
@@ -39,10 +42,10 @@ Run `L#` in a terminal or double click `LegendarySharp.exe`. Everything is in th
 | | |
 | --- | --- |
 | **Download a build** | Pick a season or jump straight to builds confirmed to download in full, choose how much of it you want, and go |
-| **My builds** | Verify, repair, resume an interrupted download, or add UEFN |
+| **My builds** | Verify, repair, resume an interrupted download, change install tags, uninstall, add UEFN and add builds found in your build folders |
 | **Downloads** | Everything queued, running or finished, with pause, resume, reorder and cancel |
 | **Browse releases** | Every known build, type to filter, open one to check availability, read its manifest or download it |
-| **Settings** | Install folder, workers, memory budget, default preset, mouse and scrolling |
+| **Settings** | Install folder, build folders, workers, memory budget, default preset, mouse and scrolling |
 
 Downloads go to `Documents\FortniteBuilds` unless you change the install root. The suggested folder is
 highlighted, so typing, pasting or dragging a folder in replaces it.
@@ -89,6 +92,10 @@ You are offered it after a download, or add it later from **My builds**. Turn th
 Starting a download adds it to **Downloads** and hands you back the menu, with a live status line on top.
 Queue as many as you like, they run one at a time. Pause, resume, reorder or cancel them from the
 Downloads screen, and close the app whenever, the queue is offered back next time you open it.
+
+A pause survives closing the app. If you close it mid-download, the download is offered back on the next
+start, and you can choose to delete what it downloaded instead. Cancel deletes only the files that
+download wrote, nothing else in the folder.
 
 While one runs it eases off when Fortnite is open, when other programs max out the CPU or when memory is
 nearly full, and speeds back up after. Turn that off in **Settings**. Downloads from other windows take

@@ -1,4 +1,5 @@
 using Legendary_Sharp.Downloader;
+using Legendary_Sharp.Downloader.Manifest;
 using Legendary_Sharp.Interface;
 
 namespace Legendary_Sharp.Application;
@@ -7,26 +8,39 @@ internal static class VerifyWorkflow
 {
     public static async Task<VerifyReport> RunAsync(OpenedBuild build, CancellationToken cancellation)
     {
-        var files = InstalledBuildLoader.SelectedFiles(build);
+        var report = await CheckAsync(InstalledBuildLoader.SelectedFiles(build), build.Root,
+            build.Manifest.ShortVersion, "Verify", cancellation).ConfigureAwait(false);
 
-        Output.Section("Verify");
+        if (build.Record.HasUnavailable)
+            Output.Hint($"{Format.Count(build.Record.Unavailable.Count)} files are not checked because Epic no longer hosts them.");
+
+        Present(report);
+        return report;
+    }
+
+    public static async Task<VerifyReport> CheckAsync(
+        IReadOnlyList<FileEntry> files,
+        string root,
+        string version,
+        string title,
+        CancellationToken cancellation)
+    {
+        Output.Section(title);
 
         new Panel()
-            .Row("Build", build.Manifest.ShortVersion, Theme.Cyan)
-            .Row("Folder", build.Root)
+            .Row("Build", version, Theme.Cyan)
+            .Row("Folder", root)
             .Row("Files to check", Format.Count(files.Count))
             .Row("Bytes to hash", Format.Bytes(files.Sum(file => file.Size)))
             .Render();
 
-        using var display = new ProgressDisplay("Verify", build.Manifest.ShortVersion);
+        using var display = new ProgressDisplay("Verify", version);
 
         var report = await InstallVerifier
-            .VerifyAsync(files, build.Root, progress => display.Update(ToDownloadProgress(progress, files.Count)),
-                cancellation)
+            .VerifyAsync(files, root, progress => display.Update(ToDownloadProgress(progress, files.Count)), cancellation)
             .ConfigureAwait(false);
 
         display.Finish();
-        Present(report);
         return report;
     }
 

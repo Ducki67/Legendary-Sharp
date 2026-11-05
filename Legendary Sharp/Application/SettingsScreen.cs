@@ -30,8 +30,10 @@ internal sealed class SettingsScreen(Session session)
             {
                 new(Field.InstallRoot, "Install root",
                     settings.EffectiveInstallRoot + (settings.UsesDefaultInstallRoot ? "   (default)" : string.Empty)),
-                new(Field.LibraryFolders, "Library folders",
-                    settings.LibraryRoots.Count > 0 ? string.Join(", ", settings.LibraryRoots) : "none"),
+                new(Field.LibraryFolders, "Build folders",
+                    settings.LibraryRoots.Count > 0
+                        ? string.Join(", ", settings.LibraryRoots)
+                        : "none, add folders to scan for builds you got elsewhere"),
                 new(Field.Workers, "Parallel workers", settings.Workers.ToString()),
                 new(Field.Memory, "Memory budget", $"{settings.CacheBudgetMiB} MiB"),
                 new(Field.Preset, "Default preset", Describe(settings.Preset)),
@@ -69,7 +71,7 @@ internal sealed class SettingsScreen(Session session)
             }
 
             case Field.LibraryFolders:
-                return EditLibrary(settings);
+                return EditLibrary(settings, session.Paths);
 
             case Field.Workers:
             {
@@ -155,22 +157,25 @@ internal sealed class SettingsScreen(Session session)
         }
     }
 
-    private static bool EditLibrary(AppSettings settings)
+    private static bool EditLibrary(AppSettings settings, AppPaths paths)
     {
-        var actions = new List<Choice<int>> { new(0, "Add a folder", "scan it when listing installed builds") };
+        var actions = new List<Choice<int>> { new(0, "Add a folder", "scanned for builds, also ones not downloaded by " + AppInfo.Name) };
 
         actions.AddRange(settings.LibraryRoots
             .Select((root, index) => new Choice<int>(index + 1, "Remove", root)));
 
-        if (!SelectionList<int>.TryPick("Library folders", actions, out var action)) return false;
+        if (!SelectionList<int>.TryPick("Build folders", actions, out var action)) return false;
 
         if (action == 0)
         {
             var added = Prompt.Path("Folder to scan", mustExist: true);
             if (added is null) return false;
-            if (settings.LibraryRoots.Contains(added, StringComparer.OrdinalIgnoreCase)) return false;
-            settings.LibraryRoots.Add(added);
-            return true;
+            if (settings.TryAddLibrary(added, paths, out var error)) return true;
+
+            Output.Blank();
+            Output.Error(error);
+            ConsoleEx.PauseForKey("Press any key to continue.");
+            return false;
         }
 
         settings.LibraryRoots.RemoveAt(action - 1);

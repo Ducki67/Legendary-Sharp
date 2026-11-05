@@ -6,7 +6,19 @@ internal static class FortniteConstants
 
     public const string ShippingExecutable = "FortniteClient-Win64-Shipping.exe";
 
-    public const string BinariesFolder = @"FortniteGame\Binaries\Win64";
+    public const string GameFolder = "FortniteGame";
+
+    public const string EngineFolder = "Engine";
+
+    public const string EgstoreFolder = ".egstore";
+
+    public static readonly string[] BuildContents = [GameFolder, EngineFolder];
+
+    public static readonly string BinariesFolder = Path.Combine(GameFolder, "Binaries", "Win64");
+
+    public static readonly string BuildVersionFile = Path.Combine(EngineFolder, "Build", "Build.version");
+
+    public const string ShippingManifestSuffix = GameFolder + "/Binaries/Win64/" + ShippingExecutable;
 
     public const string ReleaseIndexUrl =
         "https://raw.githubusercontent.com/polynite/fn-releases/master/README.md";

@@ -19,6 +19,8 @@ internal sealed class SavedJob
     [JsonPropertyName("addon")] public bool IsAddon { get; set; }
 
     [JsonPropertyName("skipMissing")] public bool SkipMissing { get; set; }
+
+    [JsonPropertyName("paused")] public bool Paused { get; set; }
 }
 
 internal sealed class SavedQueue
@@ -43,8 +45,8 @@ internal static class QueueStore
         var path = Path.Combine(paths.Pending, $"{Environment.ProcessId}.json");
 
         var saved = jobs
-            .Where(job => job.State is not (JobState.Done or JobState.Failed or JobState.Cancelled))
-            .Where(job => job.Request.RepairFiles is null)
+            .Where(job => job.State is not (JobState.Done or JobState.Failed or JobState.Cancelled)
+                          && job.Request.RepairFiles is null)
             .Select(job => new SavedJob
             {
                 Build = job.Title,
@@ -52,7 +54,8 @@ internal static class QueueStore
                 Root = job.Root,
                 Tags = job.Request.Tags is null ? null : [.. job.Request.Tags],
                 IsAddon = job.Request.IsAddon,
-                SkipMissing = job.Options.SkipMissing
+                SkipMissing = job.Options.SkipMissing,
+                Paused = job.State == JobState.Paused && job.UserPaused
             })
             .ToList();
 
@@ -78,9 +81,10 @@ internal static class QueueStore
         }
     }
 
-    public static List<SavedJob> TakeAbandoned(AppPaths paths)
+    public static List<SavedJob> TakeAbandoned(AppPaths paths, out List<string> claims)
     {
         var jobs = new List<SavedJob>();
+        claims = [];
         if (!Directory.Exists(paths.Pending)) return jobs;
 
         foreach (var path in Directory.GetFiles(paths.Pending, "*.json"))
@@ -88,29 +92,76 @@ internal static class QueueStore
             var queue = Read(path);
             if (queue is not null && IsAlive(queue)) continue;
 
-            var claimed = $"{path}.{Environment.ProcessId}.claimed";
+            Claim(path, claims, jobs);
+        }
 
+        foreach (var path in Directory.GetFiles(paths.Pending, "*.claimed"))
+        {
+            if (ClaimOwnerAlive(path)) continue;
+
+            Claim(path, claims, jobs);
+        }
+
+        return jobs;
+    }
+
+    public static void Release(IEnumerable<string> claims)
+    {
+        foreach (var claim in claims)
+        {
             try
             {
-                File.Move(path, claimed);
-            }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-            {
-                continue;
-            }
-
-            if (Read(claimed) is { } owned) jobs.AddRange(owned.Jobs);
-
-            try
-            {
-                File.Delete(claimed);
+                File.Delete(claim);
             }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException)
             {
             }
         }
+    }
 
-        return jobs;
+    private static void Claim(string path, List<string> claims, List<SavedJob> jobs)
+    {
+        var name = path;
+
+        if (path.EndsWith(".claimed", StringComparison.Ordinal))
+        {
+            var stem = path[..^".claimed".Length];
+            name = stem[..stem.LastIndexOf('.')];
+        }
+
+        var claimed = $"{name}.{Environment.ProcessId}.claimed";
+
+        try
+        {
+            File.Move(path, claimed);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return;
+        }
+
+        claims.Add(claimed);
+        if (Read(claimed) is { } owned) jobs.AddRange(owned.Jobs);
+    }
+
+    private static bool ClaimOwnerAlive(string path)
+    {
+        var name = Path.GetFileName(path);
+        var stem = name[..^".claimed".Length];
+        var dot = stem.LastIndexOf('.');
+
+        if (dot < 0 || !int.TryParse(stem[(dot + 1)..], out var pid)) return false;
+        if (pid == Environment.ProcessId) return true;
+
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            return !process.HasExited;
+        }
+        catch (Exception error) when (error is ArgumentException or InvalidOperationException or Win32Exception)
+        {
+            return false;
+        }
     }
 
     private static SavedQueue? Read(string path)

@@ -66,7 +66,7 @@ internal static class DownloadWorkflow
         Directory.CreateDirectory(root);
 
         DownloadPlan plan;
-        using (var resume = ResumeLog.Open(InstallRecord.StateDirectory(root), request.IsAddon ? "uefn.txt" : "completed.txt"))
+        using (var resume = ResumeLog.Open(InstallRecord.StateDirectory(root), request.IsAddon ? ResumeLog.AddonLog : ResumeLog.BaseLog))
         {
             if (request.Fresh) resume.Clear();
             plan = BuildPlan(request, manifest, root, resume, announce: true);
@@ -152,7 +152,7 @@ internal static class DownloadWorkflow
         var root = Path.GetFullPath(request.InstallRoot);
         Directory.CreateDirectory(root);
 
-        using var resume = ResumeLog.Open(InstallRecord.StateDirectory(root), request.IsAddon ? "uefn.txt" : "completed.txt");
+        using var resume = ResumeLog.Open(InstallRecord.StateDirectory(root), request.IsAddon ? ResumeLog.AddonLog : ResumeLog.BaseLog);
         var plan = BuildPlan(request, request.Source.Manifest, root, resume, announce: false);
         var options = session.BuildDownloadOptions(root, request.Workers, request.CacheBudgetMiB);
         return new DownloadJob(request, root, plan, options with { SkipMissing = request.SkipMissing });
@@ -243,6 +243,15 @@ internal static class DownloadWorkflow
 
         var scan = request.Fresh ? default : resume.Scan(manifest, root);
 
+        var done = scan.Completed;
+
+        if (!request.Fresh && InstallRecord.TryLoad(root) is { HasUnavailable: true } existing)
+        {
+            var skipped = existing.UnavailableSet();
+            if (done is not null) skipped.UnionWith(done);
+            done = skipped;
+        }
+
         if (announce && scan.HasProgress)
         {
             Output.Info($"Resuming: {Format.Count(scan.Completed.Count)} files already downloaded.");
@@ -250,7 +259,9 @@ internal static class DownloadWorkflow
             if (scan.Changed > 0) Output.Detail($"{scan.Changed} files changed on disk and will be fetched again.");
         }
 
-        return DownloadPlanner.Create(manifest, request.Tags, scan.Completed);
+        var partial = request.Fresh ? null : resume.LoadPartial(manifest, root);
+
+        return DownloadPlanner.Create(manifest, request.Tags, done, partial);
     }
 
     private static void Summarise(DownloadRequest request, DownloadPlan plan, string root, DownloadOptions options)
@@ -326,7 +337,8 @@ internal static class DownloadWorkflow
         return free >= plan.WriteSize;
     }
 
-    public static void SaveRecord(DownloadRequest request, string root, DownloadPlan plan, bool complete)
+    public static void SaveRecord(DownloadRequest request, string root, DownloadPlan plan, bool complete,
+        IReadOnlyList<FailedFile>? failures = null)
     {
         var manifest = plan.Manifest;
         var record = InstallRecord.TryLoad(root) ?? new InstallRecord();
@@ -346,27 +358,40 @@ internal static class DownloadWorkflow
         record.LaunchExe = manifest.LaunchExe;
         record.InstallSize = plan.SelectedInstallSize;
         if (request.RepairFiles is null) record.InstallTags = [.. request.Tags ?? []];
+        if (failures is not null)
+        {
+            var missing = failures.Where(failure => failure.NotHosted).Select(failure => failure.FileName).ToHashSet(StringComparer.Ordinal);
+            var written = plan.Files.Select(file => file.FileName).Where(name => !missing.Contains(name)).ToHashSet(StringComparer.Ordinal);
+            record.Unavailable = [.. record.Unavailable.Where(name => !written.Contains(name)).Union(missing, StringComparer.Ordinal)];
+        }
+
         if (complete) record.CompletedUtc = DateTime.UtcNow;
+        else if (request.RepairFiles is null && record.CompletedUtc is not null)
+        {
+            record.CompletedUtc = null;
+            record.Extended = true;
+        }
+
         record.Save(root);
 
         CopyManifest(request, root);
     }
 
-    private static void CopyManifest(DownloadRequest request, string root)
+    private static void CopyManifest(DownloadRequest request, string root) =>
+        CopyManifest(request.Source, request.IsAddon
+            ? InstallRecord.UefnManifestPath(root)
+            : InstallRecord.ManifestPath(root));
+
+    internal static void CopyManifest(ResolvedManifest source, string target)
     {
         try
         {
-            var target = request.IsAddon
-                ? InstallRecord.UefnManifestPath(root)
-                : InstallRecord.ManifestPath(root);
-
             if (File.Exists(target)) return;
 
-            var cached = Path.Combine(
-                AppPaths.Create().Manifests, request.Source.ManifestId + ".manifest");
+            var cached = Path.Combine(AppPaths.Create().Manifests, source.ManifestId + ".manifest");
 
             if (File.Exists(cached)) File.Copy(cached, target, overwrite: true);
-            else if (File.Exists(request.Source.Origin)) File.Copy(request.Source.Origin, target, overwrite: true);
+            else if (File.Exists(source.Origin)) File.Copy(source.Origin, target, overwrite: true);
         }
         catch (IOException)
         {

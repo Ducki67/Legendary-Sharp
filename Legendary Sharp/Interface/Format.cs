@@ -34,6 +34,8 @@ internal static class Format
 
     public static string Count(long value) => value.ToString("N0", CultureInfo.InvariantCulture);
 
+    public static string Files(long count) => $"{Count(count)} {(count == 1 ? "file" : "files")}";
+
     public static string Percent(double fraction) =>
         string.Create(CultureInfo.InvariantCulture, $"{Math.Clamp(fraction, 0d, 1d) * 100d:0.0}%");
 
