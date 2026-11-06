@@ -37,9 +37,9 @@ The plain `LegendarySharp-vX.Y.Z.exe` runs from anywhere.
 
 ### Linux
 
-Windows is the supported platform, and releases only ship Windows files. Linux works thanks to
-[burlone0](https://github.com/burlone0), but I can't test it, so build it yourself (see **Build it**) and
-send fixes as pull requests.
+Releases are Windows only. Linux support, thanks to [burlone0](https://github.com/burlone0), lives on the
+[Linux-beta](https://github.com/Ducki67/Legendary-Sharp/tree/Linux-beta) branch as a community beta: you
+build it yourself, and fixes come back as pull requests.
 
 ## Use
 
@@ -135,13 +135,12 @@ turns with yours instead of fighting over bandwidth.
 
 ## Something went wrong
 
-Errors are saved to `%LOCALAPPDATA%\LegendarySharp\log.txt`, or `~/.local/share/LegendarySharp/log.txt`
-on Linux. Attach it when you open an issue.
+Errors are saved to `%LOCALAPPDATA%\LegendarySharp\log.txt`. Attach it when you open an issue.
 
 ## Build it
 
 Needs the .NET 10 SDK. A Release build publishes the native single file exe automatically and drops it
-in `publish/`, as `LegendarySharp.exe` on Windows and `LegendarySharp` on Linux.
+in `publish/` as `LegendarySharp.exe`.
 
 ```bash
 dotnet build "Legendary Sharp/Legendary Sharp.csproj" -c Release
@@ -149,10 +148,6 @@ dotnet build "Legendary Sharp/Legendary Sharp.csproj" -c Release
 
 The native step needs the Visual Studio C++ build tools. Without them the build still succeeds, it
 just warns and leaves you the managed build. Skip it deliberately with `-p:PublishAfterBuild=false`.
-
-On Linux the native step needs clang and the zlib dev package instead. For an AppImage run
-`packaging/linux/build-appimage.sh`. It builds inside an Ubuntu 22.04 container (needs podman or docker),
-so the result runs on any distro with glibc 2.35 or newer, and drops it in `publish/`.
 
 Debug builds never publish.
 
