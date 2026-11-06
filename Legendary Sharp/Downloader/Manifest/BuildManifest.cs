@@ -2,6 +2,8 @@ namespace Legendary_Sharp.Downloader.Manifest;
 
 internal sealed class BuildManifest
 {
+    private const string ContentApp = "FortniteContentBuilds";
+
     private readonly Dictionary<ChunkGuid, ChunkInfo> _chunkLookup;
     private readonly Lazy<string[]> _installTags;
 
@@ -46,6 +48,8 @@ internal sealed class BuildManifest
     public int FeatureLevel { get; }
 
     public string AppName { get; }
+
+    public bool IsContentBuild => AppName.Equals(ContentApp, StringComparison.OrdinalIgnoreCase);
 
     public string BuildVersion { get; }
 

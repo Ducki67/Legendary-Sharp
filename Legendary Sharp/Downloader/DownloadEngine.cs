@@ -43,7 +43,7 @@ internal sealed class DownloadEngine(DownloadOptions options)
         var dispatcher = DispatchAsync(plan, cache, channel.Writer, abort.Token);
         var workers = Enumerable
             .Range(0, options.Workers)
-            .Select(_ => ConsumeAsync(plan.Manifest.FeatureLevel, source, cache, channel.Reader, abort.Token))
+            .Select(_ => ConsumeAsync(plan.Manifest, source, cache, channel.Reader, abort.Token))
             .ToArray();
 
         var reporter = ReportAsync(plan, source, cache, started, onProgress, abort.Token);
@@ -120,7 +120,7 @@ internal sealed class DownloadEngine(DownloadOptions options)
     }
 
     private async Task ConsumeAsync(
-        int featureLevel,
+        BuildManifest manifest,
         ChunkSource source,
         ChunkCache cache,
         ChannelReader<ChunkInfo> reader,
@@ -142,7 +142,7 @@ internal sealed class DownloadEngine(DownloadOptions options)
 
             try
             {
-                var data = await source.FetchAsync(chunk, featureLevel, cancellation).ConfigureAwait(false);
+                var data = await source.FetchAsync(chunk, manifest, cancellation).ConfigureAwait(false);
                 cache.Publish(chunk.Guid, data);
                 Interlocked.Increment(ref _chunksDone);
             }

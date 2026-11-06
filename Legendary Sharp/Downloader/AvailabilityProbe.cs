@@ -39,7 +39,7 @@ internal static class AvailabilityProbe
             try
             {
                 var presence = await source
-                    .ProbeAsync(chunk, plan.Manifest.FeatureLevel, cancellation)
+                    .ProbeAsync(chunk, plan.Manifest, cancellation)
                     .ConfigureAwait(false);
 
                 if (presence == ChunkPresence.Present) Interlocked.Increment(ref available);

@@ -13,10 +13,14 @@ internal enum ChunkPresence
 
 internal sealed class ChunkSource : IDisposable
 {
+    private const string CloudFolder = "/CloudDir";
+    private const string ContentFolder = "/Content";
+
     private static readonly TimeSpan LongestBackoff = TimeSpan.FromSeconds(15);
 
     private readonly HttpClient _client;
     private readonly string[] _mirrors;
+    private readonly string[] _contentMirrors;
     private readonly int _attempts;
     private readonly TimeSpan _stallTimeout;
 
@@ -28,6 +32,7 @@ internal sealed class ChunkSource : IDisposable
         if (mirrors.Count == 0) throw new ArgumentException("At least one mirror is required.", nameof(mirrors));
 
         _mirrors = [.. mirrors.Select(mirror => mirror.TrimEnd('/'))];
+        _contentMirrors = [.. _mirrors.Select(ContentMirror)];
         _attempts = Math.Max(_mirrors.Length, attempts);
         _stallTimeout = stallTimeout;
 
@@ -47,11 +52,12 @@ internal sealed class ChunkSource : IDisposable
 
     public long Transferred => Interlocked.Read(ref _transferred);
 
-    public async Task<byte[]> FetchAsync(ChunkInfo chunk, int featureLevel, CancellationToken cancellation)
+    public async Task<byte[]> FetchAsync(ChunkInfo chunk, BuildManifest manifest, CancellationToken cancellation)
     {
-        var path = chunk.BuildPath(featureLevel);
-        var gone = new bool[_mirrors.Length];
-        var start = (int)((uint)Interlocked.Increment(ref _cursor) % (uint)_mirrors.Length);
+        var path = chunk.BuildPath(manifest.FeatureLevel);
+        var mirrors = Mirrors(manifest);
+        var gone = new bool[mirrors.Length];
+        var start = (int)((uint)Interlocked.Increment(ref _cursor) % (uint)mirrors.Length);
         var failures = 0;
         Exception? last = null;
 
@@ -59,12 +65,12 @@ internal sealed class ChunkSource : IDisposable
         {
             if (Array.TrueForAll(gone, value => value)) break;
 
-            var index = (start + attempt) % _mirrors.Length;
+            var index = (start + attempt) % mirrors.Length;
             if (gone[index]) continue;
 
             try
             {
-                var payload = await GetAsync($"{_mirrors[index]}/{path}", cancellation).ConfigureAwait(false);
+                var payload = await GetAsync($"{mirrors[index]}/{path}", cancellation).ConfigureAwait(false);
                 var data = ChunkFile.Unpack(payload, chunk, verify: true);
                 Interlocked.Add(ref _transferred, payload.Length);
                 return data;
@@ -135,12 +141,12 @@ internal sealed class ChunkSource : IDisposable
         }
     }
 
-    public async Task<ChunkPresence> ProbeAsync(ChunkInfo chunk, int featureLevel, CancellationToken cancellation)
+    public async Task<ChunkPresence> ProbeAsync(ChunkInfo chunk, BuildManifest manifest, CancellationToken cancellation)
     {
-        var path = chunk.BuildPath(featureLevel);
+        var path = chunk.BuildPath(manifest.FeatureLevel);
         var answered = false;
 
-        foreach (var mirror in _mirrors)
+        foreach (var mirror in Mirrors(manifest))
         {
             using var stall = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
             stall.CancelAfter(_stallTimeout);
@@ -163,6 +169,13 @@ internal sealed class ChunkSource : IDisposable
 
         return answered ? ChunkPresence.Gone : ChunkPresence.Unreachable;
     }
+
+    private string[] Mirrors(BuildManifest manifest) => manifest.IsContentBuild ? _contentMirrors : _mirrors;
+
+    private static string ContentMirror(string mirror) =>
+        mirror.EndsWith(CloudFolder, StringComparison.OrdinalIgnoreCase)
+            ? mirror[..^CloudFolder.Length] + ContentFolder + CloudFolder
+            : mirror;
 
     private static TimeSpan Backoff(int failures)
     {
