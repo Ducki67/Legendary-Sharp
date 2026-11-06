@@ -26,6 +26,8 @@ internal sealed class DownloadPlan
 
     public required long PeakCacheBytes { get; init; }
 
+    public PartialFile? Partial { get; init; }
+
     public int ChunkCount => ChunkOrder.Count;
 
     public bool IsEmpty => Files.Count == 0;

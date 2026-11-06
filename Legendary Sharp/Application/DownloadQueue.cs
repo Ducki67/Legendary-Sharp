@@ -23,8 +23,7 @@ internal sealed class QueueTicket
     [JsonPropertyName("etaSeconds")] public double EtaSeconds { get; set; }
 
     public bool IsFor(string folder) =>
-        Folder.Length > 0 && string.Equals(Path.GetFullPath(Folder), Path.GetFullPath(folder),
-            StringComparison.OrdinalIgnoreCase);
+        Folder.Length > 0 && FolderPath.Same(Folder, folder);
 }
 
 internal readonly record struct QueueEntry(string Path, QueueTicket? Ticket, bool Mine);

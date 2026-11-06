@@ -41,11 +41,13 @@ internal static class InstalledBuildLoader
         return new OpenedBuild(root, record, resolved);
     }
 
-    public static List<FileEntry> SelectedFiles(OpenedBuild build) =>
-        build.Record.InstallTags.Count == 0
-            ? DownloadPlannerFiles(build, null)
-            : DownloadPlannerFiles(build, build.Record.InstallTags);
+    public static List<FileEntry> SelectedFiles(OpenedBuild build)
+    {
+        var files = Downloader.DownloadPlanner.SelectFiles(build.Manifest, build.Record.TagFilter);
 
-    private static List<FileEntry> DownloadPlannerFiles(OpenedBuild build, IReadOnlyList<string>? tags) =>
-        Downloader.DownloadPlanner.SelectFiles(build.Manifest, tags);
+        if (!build.Record.HasUnavailable) return files;
+
+        var skipped = build.Record.UnavailableSet();
+        return [.. files.Where(file => !skipped.Contains(file.FileName))];
+    }
 }

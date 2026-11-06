@@ -8,7 +8,8 @@ internal static class DownloadPlanner
     public static DownloadPlan Create(
         BuildManifest manifest,
         IReadOnlyList<string>? tags,
-        IReadOnlySet<string>? alreadyComplete = null)
+        IReadOnlySet<string>? alreadyComplete = null,
+        PartialFile? partial = null)
     {
         var selected = SelectFiles(manifest, tags);
         var selectedInstallSize = selected.Sum(file => file.Size);
@@ -18,17 +19,18 @@ internal static class DownloadPlanner
             : [.. selected.Where(file => !alreadyComplete.Contains(file.FileName))];
 
         return Build(manifest, pending, tags ?? [], manifest.Files.Count - selected.Count,
-            selected.Count - pending.Count, selectedInstallSize);
+            selected.Count - pending.Count, selectedInstallSize, partial);
     }
 
     public static DownloadPlan CreateForFiles(
         BuildManifest manifest,
         IReadOnlyList<FileEntry> files,
-        IReadOnlyList<string> tags)
+        IReadOnlyList<string> tags,
+        PartialFile? partial = null)
     {
         var ordered = files.ToList();
         ordered.Sort(static (left, right) => string.CompareOrdinal(left.FileName, right.FileName));
-        return Build(manifest, ordered, tags, 0, 0, ordered.Sum(file => file.Size));
+        return Build(manifest, ordered, tags, 0, 0, ordered.Sum(file => file.Size), partial);
     }
 
     public static List<FileEntry> SelectFiles(BuildManifest manifest, IReadOnlyList<string>? tags)
@@ -63,12 +65,18 @@ internal static class DownloadPlanner
         IReadOnlyList<string> tags,
         int skippedByTag,
         int alreadyComplete,
-        long selectedInstallSize)
+        long selectedInstallSize,
+        PartialFile? partial)
     {
+        if (partial is not null && !pending.Any(file => file.FileName == partial.FileName)) partial = null;
+
+        IEnumerable<ChunkPart> PendingParts(FileEntry file) =>
+            partial is not null && file.FileName == partial.FileName ? file.Parts.Skip(partial.Parts) : file.Parts;
+
         var order = new List<ChunkGuid>();
         var references = new Dictionary<ChunkGuid, int>();
 
-        foreach (var part in pending.SelectMany(file => file.Parts))
+        foreach (var part in pending.SelectMany(PendingParts))
         {
             ref var count = ref CollectionsMarshal.GetValueRefOrAddDefault(references, part.Guid, out var existed);
             count++;
@@ -85,23 +93,25 @@ internal static class DownloadPlanner
             SkippedByTag = skippedByTag,
             AlreadyComplete = alreadyComplete,
             DownloadSize = order.Sum(guid => manifest.Chunk(guid).CompressedSize),
-            WriteSize = pending.Sum(file => file.Size),
+            WriteSize = pending.Sum(file => file.Size) - (partial?.Bytes ?? 0),
+            Partial = partial,
             SelectedInstallSize = selectedInstallSize,
-            PeakCacheBytes = PeakCacheBytes(manifest, pending, references)
+            PeakCacheBytes = PeakCacheBytes(manifest, pending, references, PendingParts)
         };
     }
 
     private static long PeakCacheBytes(
         BuildManifest manifest,
         IReadOnlyList<FileEntry> files,
-        IReadOnlyDictionary<ChunkGuid, int> references)
+        IReadOnlyDictionary<ChunkGuid, int> references,
+        Func<FileEntry, IEnumerable<ChunkPart>> pendingParts)
     {
         var remaining = new Dictionary<ChunkGuid, int>(references);
         var resident = new HashSet<ChunkGuid>();
         long live = 0;
         long peak = 0;
 
-        foreach (var part in files.SelectMany(file => file.Parts))
+        foreach (var part in files.SelectMany(pendingParts))
         {
             var size = manifest.Chunk(part.Guid).WindowSize;
 

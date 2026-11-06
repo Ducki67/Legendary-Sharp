@@ -27,7 +27,8 @@ internal sealed record JobView(
     string Message,
     QueueTicket? Blocker,
     UefnRelease? Uefn,
-    DateTime? Finished)
+    DateTime? Finished,
+    bool DiscardAllowed)
 {
     public bool IsActive => State is JobState.Queued or JobState.Waiting or JobState.Running;
 
@@ -43,6 +44,7 @@ internal sealed class DownloadJob(DownloadRequest request, string root, Download
     private readonly Lock _gate = new();
 
     private JobState _state = JobState.Queued;
+    private bool _userPaused;
     private DownloadProgress? _progress;
     private DownloadResult? _result;
     private string _message = string.Empty;
@@ -51,12 +53,15 @@ internal sealed class DownloadJob(DownloadRequest request, string root, Download
     private DateTime? _finished;
     private CancellationTokenSource? _run;
     private bool _cancelRequested;
+    private bool _discardRequested;
 
     public Guid Id { get; } = Guid.NewGuid();
 
     public DownloadRequest Request { get; } = request;
 
     public string Root { get; } = root;
+
+    public bool DiscardAllowed { get; } = InstallDiscard.IsAllowed(request, root);
 
     public DownloadPlan Plan { get; set; } = plan;
 
@@ -84,11 +89,19 @@ internal sealed class DownloadJob(DownloadRequest request, string root, Download
         }
     }
 
+    public bool DiscardRequested
+    {
+        get
+        {
+            lock (_gate) return _discardRequested;
+        }
+    }
+
     public JobView View()
     {
         lock (_gate)
             return new JobView(Id, Title, Request.Action, Root, _state, Plan.DownloadSize, _progress, _result,
-                _message, _blocker, _uefn, _finished);
+                _message, _blocker, _uefn, _finished, DiscardAllowed);
     }
 
     public void Begin(CancellationTokenSource run)
@@ -97,6 +110,7 @@ internal sealed class DownloadJob(DownloadRequest request, string root, Download
         {
             _run = run;
             _cancelRequested = false;
+            _discardRequested = false;
             _state = JobState.Waiting;
             _message = string.Empty;
             _progress = null;
@@ -110,10 +124,23 @@ internal sealed class DownloadJob(DownloadRequest request, string root, Download
         lock (_gate) _run = null;
     }
 
+    public bool UserPaused
+    {
+        get
+        {
+            lock (_gate) return _userPaused;
+        }
+        set
+        {
+            lock (_gate) _userPaused = value;
+        }
+    }
+
     public void Move(JobState state, string message = "")
     {
         lock (_gate)
         {
+            if (state != JobState.Paused) _userPaused = false;
             _state = state;
             _message = message;
             _blocker = null;
@@ -153,7 +180,7 @@ internal sealed class DownloadJob(DownloadRequest request, string root, Download
         lock (_gate) _message = message;
     }
 
-    public bool Stop(bool cancel)
+    public bool Stop(bool cancel, bool discard = false)
     {
         CancellationTokenSource? run;
 
@@ -162,6 +189,7 @@ internal sealed class DownloadJob(DownloadRequest request, string root, Download
             run = _run;
             if (run is null) return false;
             _cancelRequested = cancel;
+            _discardRequested = cancel && discard;
         }
 
         try

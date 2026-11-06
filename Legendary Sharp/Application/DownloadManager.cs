@@ -33,13 +33,12 @@ internal sealed class DownloadManager : IDisposable
 
     public bool HasActive => Snapshot().Any(job => job.IsActive);
 
-    public bool Holds(string folder)
-    {
-        var full = Path.GetFullPath(folder);
+    public bool Holds(string folder) => Any(folder, job => job.IsActive);
 
-        return Snapshot().Any(job => job.IsActive &&
-                                     string.Equals(Path.GetFullPath(job.Root), full, StringComparison.OrdinalIgnoreCase));
-    }
+    public bool Claims(string folder) => Any(folder, job => !job.IsFinished);
+
+    private bool Any(string folder, Func<JobView, bool> state, Guid except = default) =>
+        Snapshot().Any(job => job.Id != except && state(job) && FolderPath.Same(job.Root, folder));
 
     public void Enqueue(DownloadJob job)
     {
@@ -52,6 +51,7 @@ internal sealed class DownloadManager : IDisposable
         var job = Find(id);
         if (job is null) return;
 
+        job.UserPaused = true;
         if (job.State is JobState.Running or JobState.Waiting && job.Stop(cancel: false)) return;
         if (job.State == JobState.Queued) job.Move(JobState.Paused);
         Changed();
@@ -76,15 +76,36 @@ internal sealed class DownloadManager : IDisposable
         Changed();
     }
 
-    public void Cancel(Guid id)
+    public async Task CancelAsync(Guid id, bool discard = false)
     {
         var job = Find(id);
         if (job is null || job.State is JobState.Done or JobState.Cancelled) return;
 
-        if (job.State is JobState.Running or JobState.Waiting && job.Stop(cancel: true)) return;
-        job.Move(JobState.Cancelled, "Cancelled, progress is kept in the folder.");
+        if (job.State is JobState.Running or JobState.Waiting && job.Stop(cancel: true, discard)) return;
+
+        await DiscardAsync(job, discard).ConfigureAwait(false);
         Changed();
     }
+
+    private async Task DiscardAsync(DownloadJob job, bool discard)
+    {
+        if (!discard || !job.DiscardAllowed || Any(job.Root, other => other.IsActive, job.Id))
+        {
+            job.Move(JobState.Cancelled, "Cancelled, progress is kept in the folder.");
+            return;
+        }
+
+        job.Note(DeletingMessage);
+        Changed();
+        var outcome = await Task.Run(() => InstallDiscard.Run(job.Request, job.Root)).ConfigureAwait(false);
+        job.Move(JobState.Cancelled, DiscardMessage(outcome));
+    }
+
+    internal const string DeletingMessage = "Deleting the files it downloaded...";
+
+    private static string DiscardMessage(DiscardOutcome outcome) => outcome.Failed > 0
+        ? $"Cancelled, but {Format.Files(outcome.Failed)} {(outcome.Failed == 1 ? "is" : "are")} in use and left in the folder."
+        : $"Cancelled, {Format.Files(outcome.Deleted)} deleted.";
 
     public void Remove(Guid id)
     {
@@ -177,7 +198,7 @@ internal sealed class DownloadManager : IDisposable
             Directory.CreateDirectory(job.Root);
 
             using var resume = ResumeLog.Open(InstallRecord.StateDirectory(job.Root),
-                request.IsAddon ? "uefn.txt" : "completed.txt");
+                request.IsAddon ? ResumeLog.AddonLog : ResumeLog.BaseLog);
 
             using var lease = DownloadQueue.Join(_session.Paths, new QueueTicket
             {
@@ -218,20 +239,18 @@ internal sealed class DownloadManager : IDisposable
 
             lease.Dispose();
 
-            var complete = result.Failures.Count == 0;
-            DownloadWorkflow.SaveRecord(request, job.Root, job.Plan, complete);
-            job.Finish(result, complete
+            var complete = result.Failures.All(failure => failure.NotHosted);
+            DownloadWorkflow.SaveRecord(request, job.Root, job.Plan, complete, result.Failures);
+            job.Finish(result, result.Failures.Count == 0
                 ? $"Finished in {Format.Duration(result.Elapsed)}."
-                : $"{Format.Count(result.Failures.Count)} files could not be downloaded, Epic no longer hosts them.");
+                : $"{Format.Files(result.Failures.Count)} could not be downloaded, Epic no longer hosts them.");
 
             await AfterAsync(job, run.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (run.IsCancellationRequested)
         {
             if (job.CancelRequested)
-            {
-                job.Move(JobState.Cancelled, "Cancelled, progress is kept in the folder.");
-            }
+                await DiscardAsync(job, job.DiscardRequested).ConfigureAwait(false);
             else
             {
                 job.Move(JobState.Paused, "Paused, progress is saved.");

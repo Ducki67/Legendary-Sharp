@@ -1,3 +1,4 @@
+using Legendary_Sharp.Downloader;
 using Legendary_Sharp.Downloader.Manifest;
 using Legendary_Sharp.Fortnite;
 using Legendary_Sharp.Interface;
@@ -26,16 +27,6 @@ internal sealed class InteractiveShell(Session session)
         Check,
         Info,
         Tags,
-        Back
-    }
-
-    private enum BuildAction
-    {
-        Verify,
-        Repair,
-        Resume,
-        Uefn,
-        Reveal,
         Back
     }
 
@@ -76,7 +67,7 @@ internal sealed class InteractiveShell(Session session)
                         await new DownloadsScreen(session).RunAsync(null, cancellation).ConfigureAwait(false);
                         break;
                     case MainAction.Library:
-                        await LibraryAsync(cancellation).ConfigureAwait(false);
+                        await new LibraryScreen(session).RunAsync(cancellation).ConfigureAwait(false);
                         break;
                     case MainAction.Browse:
                         await BrowseAsync(cancellation).ConfigureAwait(false);
@@ -119,9 +110,9 @@ internal sealed class InteractiveShell(Session session)
         {
             new(MainAction.Download, "Download a build", download),
             new(MainAction.Downloads, "Downloads", DownloadsNote()),
-            new(MainAction.Library, "My builds", "verify, repair, resume or add UEFN to what is installed"),
+            new(MainAction.Library, "My builds", "verify, repair, resume, change tags, uninstall or add UEFN"),
             new(MainAction.Browse, "Browse releases", "every known build across the manifest archives"),
-            new(MainAction.Settings, "Settings", "install folder, workers, default preset, mouse"),
+            new(MainAction.Settings, "Settings", "install folder, build folders, workers, default preset, mouse"),
             new(MainAction.Quit, "Quit", string.Empty)
         };
 
@@ -155,7 +146,7 @@ internal sealed class InteractiveShell(Session session)
                 .ConfigureAwait(false);
         }
 
-        var tags = PickTags(resolved.Manifest);
+        var tags = TagPicker.Pick(resolved.Manifest);
         if (tags is null) return;
 
         var folder = PickFolder(release, resolved);
@@ -168,19 +159,10 @@ internal sealed class InteractiveShell(Session session)
             Tags = tags
         };
 
-        await ShowQueuedAsync(await DownloadWorkflow.QueueAsync(session, request, cancellation).ConfigureAwait(false),
-            cancellation).ConfigureAwait(false);
-    }
-
-    private async Task ShowQueuedAsync(DownloadJob? job, CancellationToken cancellation)
-    {
-        if (job is null)
-        {
-            ConsoleEx.PauseForKey("Press any key to go back to the menu.");
-            return;
-        }
-
-        await new DownloadsScreen(session).RunAsync(job.Id, cancellation).ConfigureAwait(false);
+        await new DownloadsScreen(session)
+            .ShowQueuedAsync(await DownloadWorkflow.QueueAsync(session, request, cancellation).ConfigureAwait(false),
+                cancellation)
+            .ConfigureAwait(false);
     }
 
     private IReadOnlyList<string> Banner()
@@ -273,43 +255,126 @@ internal sealed class InteractiveShell(Session session)
 
     private async Task RestoreAsync(CancellationToken cancellation)
     {
-        var saved = QueueStore.TakeAbandoned(session.Paths);
-        if (saved.Count == 0) return;
+        var taken = QueueStore.TakeAbandoned(session.Paths, out var claims);
+        var saved = taken.Where(job => !job.Paused).ToList();
+        var paused = taken.Where(job => job.Paused).ToList();
 
-        Header();
-        Output.Section("Unfinished downloads");
-        Output.Info(saved.Count == 1
-            ? "A download was still queued when the app last closed."
-            : $"{saved.Count} downloads were still queued when the app last closed.");
-        Output.Blank();
+        if (saved.Count > 0)
+        {
+            Header();
+            Output.Section("Unfinished downloads");
+            Output.Info(saved.Count == 1
+                ? "A download was still queued when the app last closed."
+                : $"{saved.Count} downloads were still queued when the app last closed.");
+            Output.Blank();
 
-        foreach (var job in saved.Take(8)) Output.Bullet($"{job.Build}   {job.Root}");
-        if (saved.Count > 8) Output.Detail($"and {saved.Count - 8} more");
+            foreach (var job in saved.Take(8)) Output.Bullet($"{job.Build}   {job.Root}");
+            if (saved.Count > 8) Output.Detail($"and {saved.Count - 8} more");
 
-        Output.Blank();
-        if (Prompt.Ask("Pick them back up?") != true) return;
+            Output.Blank();
+
+            if (Prompt.Ask("Pick them back up?") == true)
+            {
+                foreach (var job in saved) await RestoreJobAsync(job, false, cancellation).ConfigureAwait(false);
+            }
+            else if (Prompt.Ask("Delete what they downloaded so far?", false) == true)
+            {
+                await DiscardSavedAsync(saved, paused, cancellation).ConfigureAwait(false);
+            }
+        }
+
+        if (paused.Count > 0)
+        {
+            if (saved.Count == 0)
+            {
+                Header();
+                Output.Section("Unfinished downloads");
+            }
+
+            Output.Info("Restoring your downloads...");
+        }
+
+        foreach (var job in paused) await RestoreJobAsync(job, true, cancellation).ConfigureAwait(false);
+
+        QueueStore.Release(claims);
+    }
+
+    private async Task RestoreJobAsync(SavedJob job, bool paused, CancellationToken cancellation)
+    {
+        try
+        {
+            var source = await RestoreSourceAsync(job, cancellation).ConfigureAwait(false);
+            var restored = DownloadWorkflow.CreateQuietly(session, RestoreRequest(job, source));
+            if (paused)
+            {
+                restored.Move(JobState.Paused, "Paused, progress is saved.");
+                restored.UserPaused = true;
+            }
+            session.Downloads.Enqueue(restored);
+        }
+        catch (Exception error) when (error is not OperationCanceledException || !cancellation.IsCancellationRequested)
+        {
+            Output.Warn($"{job.Build} could not be picked back up: {error.Message}");
+            ErrorLog.Write(error, $"restore {job.Build}");
+        }
+    }
+
+    private static DownloadRequest RestoreRequest(SavedJob job, ResolvedManifest source) => new()
+    {
+        Source = source,
+        InstallRoot = job.Root,
+        Tags = job.Tags,
+        IsAddon = job.IsAddon,
+        SkipMissing = job.SkipMissing
+    };
+
+    private async Task DiscardSavedAsync(List<SavedJob> saved, List<SavedJob> paused, CancellationToken cancellation)
+    {
+        var skipped = 0;
+        var prepared = new List<(SavedJob Job, DownloadRequest Request)>();
 
         foreach (var job in saved)
         {
             try
             {
-                var source = await RestoreSourceAsync(job, cancellation).ConfigureAwait(false);
-
-                session.Downloads.Enqueue(DownloadWorkflow.CreateQuietly(session, new DownloadRequest
-                {
-                    Source = source,
-                    InstallRoot = job.Root,
-                    Tags = job.Tags,
-                    IsAddon = job.IsAddon,
-                    SkipMissing = job.SkipMissing
-                }));
+                var request = RestoreRequest(job, await RestoreSourceAsync(job, cancellation).ConfigureAwait(false));
+                if (InstallDiscard.IsAllowed(request, job.Root)) prepared.Add((job, request));
+                else skipped++;
             }
             catch (Exception error) when (error is not OperationCanceledException)
             {
-                Output.Warn($"{job.Build} could not be picked back up: {error.Message}");
-                ErrorLog.Write(error, $"restore {job.Build}");
+                skipped++;
+                Output.Warn($"{job.Build} could not be cleaned up: {error.Message}");
+                ErrorLog.Write(error, $"discard {job.Build}");
             }
         }
+
+        var deleted = 0;
+        var failed = 0;
+
+        foreach (var (job, request) in prepared)
+        {
+            var full = Path.GetFullPath(job.Root);
+
+            if (session.Downloads.Holds(job.Root) || DownloadQueue.Busy(session.Paths, job.Root) is not null ||
+                paused.Any(other => string.Equals(Path.GetFullPath(other.Root), full, StringComparison.OrdinalIgnoreCase)))
+            {
+                skipped++;
+                continue;
+            }
+
+            DiscardOutcome outcome;
+
+            using (Spinner.Start($"Deleting the files {job.Build} downloaded"))
+                outcome = await Task.Run(() => InstallDiscard.Run(request, job.Root), cancellation).ConfigureAwait(false);
+
+            deleted += outcome.Deleted;
+            failed += outcome.Failed;
+        }
+
+        Output.Success($"Deleted {Format.Count(deleted)} files.");
+        if (failed > 0) Output.Warn($"{Format.Count(failed)} files are in use and were left in the folder.");
+        if (skipped > 0) Output.Hint(skipped == 1 ? "1 download was left as it is." : $"{skipped} downloads were left as they are.");
     }
 
     private async Task<ResolvedManifest> RestoreSourceAsync(SavedJob job, CancellationToken cancellation)
@@ -403,91 +468,6 @@ internal sealed class InteractiveShell(Session session)
         return string.Join("   ", parts);
     }
 
-    private static readonly TagPreset CustomTags = new("custom", "custom", "") { Includes = _ => false };
-
-    private static readonly TagPreset FileTags = new("file", "file", "") { Includes = _ => false };
-
-    private static List<string>? LoadTagFile(BuildManifest manifest)
-    {
-        Output.Blank();
-        var path = Prompt.Path("Selective download file", mustExist: false);
-        if (path is null) return null;
-
-        try
-        {
-            var wanted = TagPresets.FromSelectiveDownloadFile(path);
-            var usable = TagPresets.Intersect(wanted, manifest);
-
-            Output.Blank();
-
-            if (usable.Count == 0)
-            {
-                Output.Error("None of the tags in that file exist in this build.");
-                Output.Hint("That file is probably for a different build era.");
-                ConsoleEx.PauseForKey("Press any key to go back.");
-                return null;
-            }
-
-            Output.Success($"{usable.Count} of {wanted.Count} tags from that file apply to this build.");
-            Output.Pair("Size on disk", Format.Bytes(InstallTagCatalog.SizeOf(manifest, usable)));
-            return usable;
-        }
-        catch (Exception error) when (error is IOException or System.Text.Json.JsonException or InvalidDataException)
-        {
-            Output.Blank();
-            Output.Error(error.Message);
-            ConsoleEx.PauseForKey("Press any key to go back.");
-            return null;
-        }
-    }
-
-    private static List<string>? PickTags(BuildManifest manifest)
-    {
-        var groups = InstallTagCatalog.Summarise(manifest);
-
-        if (groups.Count <= 1)
-        {
-            Output.Blank();
-            Output.Info($"This build has no install tags, the whole {Format.Bytes(manifest.InstallSize)} comes down.");
-            return InstallTagCatalog.Flatten(groups);
-        }
-
-        var choices = TagPresets.All
-            .Select(preset => new Choice<TagPreset?>(
-                preset,
-                $"{preset.Name}  ({Format.Bytes(InstallTagCatalog.SizeOf(manifest, preset.Resolve(groups)))})",
-                preset.Description))
-            .ToList();
-
-        choices.Add(new Choice<TagPreset?>(CustomTags, "Pick tags myself", $"{groups.Count} groups available"));
-        choices.Add(new Choice<TagPreset?>(FileTags, "Load from a file",
-            "a selective download json, the kind shared for each build era"));
-
-        if (!SelectionList<TagPreset?>.TryPick("How much of the build do you want?", choices, out var chosen))
-            return null;
-
-        if (ReferenceEquals(chosen, FileTags)) return LoadTagFile(manifest);
-        if (!ReferenceEquals(chosen, CustomTags) && chosen is not null) return chosen.Resolve(groups);
-
-        var required = groups
-            .Select((group, index) => (group, index))
-            .Where(item => item.group.Kind is TagKind.Untagged or TagKind.Core)
-            .Select(item => item.index);
-
-        var tagChoices = groups
-            .Select(group => new Choice<TagGroup>(
-                group,
-                group.Display,
-                Format.Bytes(group.InstallSize).PadLeft(10) + "   " + group.Description))
-            .ToList();
-
-        return MultiSelectList<TagGroup>.TryPick("Select install tags", tagChoices, required, out var picked,
-            selected => Format.Bytes(InstallTagCatalog.SizeOf(manifest, InstallTagCatalog.Flatten(selected))) +
-                        " on disk")
-            ? InstallTagCatalog.Flatten(picked)
-            : null;
-    }
-
     private string? PickFolder(ReleaseEntry release, ResolvedManifest resolved)
     {
         var root = _here ?? session.Settings.EffectiveInstallRoot;
@@ -501,132 +481,6 @@ internal sealed class InteractiveShell(Session session)
 
         Output.Blank();
         return Prompt.Path("Install folder", suggestion);
-    }
-
-    private async Task LibraryAsync(CancellationToken cancellation)
-    {
-        var builds = BuildLibrary.Scan(session.Settings.ScanRoots());
-
-        if (builds.Count == 0)
-        {
-            Output.Blank();
-            Output.Info("No builds found yet.");
-            Output.Hint($"Looked in {string.Join(", ", session.Settings.ScanRoots())}");
-            ConsoleEx.PauseForKey("Press any key to go back.");
-            return;
-        }
-
-        var queue = DownloadQueue.Others(session.Paths);
-        var mine = session.Downloads.Snapshot();
-
-        var choices = builds
-            .Select(build => new Choice<InstalledBuild>(
-                build,
-                Naming.ShortenBuildVersion(build.Record.BuildVersion),
-                $"{Format.Bytes(build.Record.InstallSize)}  {Status(build, queue, mine)}  {build.Path}"))
-            .ToList();
-
-        if (!SelectionList<InstalledBuild>.TryPick("Which build?", choices, out var chosen)) return;
-
-        var actions = new List<Choice<BuildAction>>
-        {
-            new(BuildAction.Verify, "Verify", "hash every file against the manifest"),
-            new(BuildAction.Repair, "Repair", "verify then re-download anything broken"),
-            new(BuildAction.Resume, "Resume download", "continue an interrupted download",
-                !chosen.Record.IsComplete),
-            new(BuildAction.Uefn, "Install UEFN",
-                chosen.Record.HasUefn ? "already installed, run again to restore files" : "add the Unreal Editor"),
-            new(BuildAction.Reveal, "Show folder path", chosen.Path),
-            new(BuildAction.Back, "Back", string.Empty)
-        };
-
-        if (!SelectionList<BuildAction>.TryPick(Naming.ShortenBuildVersion(chosen.Record.BuildVersion), actions,
-                out var action)) return;
-
-        switch (action)
-        {
-            case BuildAction.Back:
-                return;
-
-            case BuildAction.Reveal:
-                Output.Blank();
-                Output.Pair("Folder", chosen.Path);
-                break;
-
-            case BuildAction.Verify or BuildAction.Repair when IsBusy(chosen):
-                break;
-
-            case BuildAction.Verify:
-            {
-                var build = await InstalledBuildLoader.OpenAsync(session, chosen.Path, cancellation)
-                    .ConfigureAwait(false);
-                await VerifyWorkflow.RunAsync(build, cancellation).ConfigureAwait(false);
-                break;
-            }
-
-            case BuildAction.Repair:
-            {
-                var job = await RepairWorkflow.RunAsync(session, chosen.Path, cancellation).ConfigureAwait(false);
-                if (job is null) break;
-                await ShowQueuedAsync(job, cancellation).ConfigureAwait(false);
-                return;
-            }
-
-            case BuildAction.Uefn:
-                await ShowQueuedAsync(
-                    await UefnWorkflow.InstallForBuildAsync(session, chosen.Path, cancellation).ConfigureAwait(false),
-                    cancellation).ConfigureAwait(false);
-                return;
-
-            case BuildAction.Resume:
-            {
-                var build = await InstalledBuildLoader.OpenAsync(session, chosen.Path, cancellation)
-                    .ConfigureAwait(false);
-
-                await ShowQueuedAsync(await DownloadWorkflow.QueueAsync(session, new DownloadRequest
-                {
-                    Source = build.Source,
-                    InstallRoot = build.Root,
-                    Tags = build.Record.InstallTags.Count > 0 ? build.Record.InstallTags : null
-                }, cancellation).ConfigureAwait(false), cancellation).ConfigureAwait(false);
-
-                return;
-            }
-        }
-
-        ConsoleEx.PauseForKey("Press any key to go back to the menu.");
-    }
-
-    private static string Status(InstalledBuild build, IReadOnlyList<QueueEntry> queue, IReadOnlyList<JobView> mine)
-    {
-        if (mine.FirstOrDefault(job => job.IsActive && SameFolder(job.Root, build.Path)) is { } job)
-            return job.State == JobState.Running ? "downloading now" : "in your downloads";
-
-        var index = queue.ToList().FindIndex(entry => entry.Ticket?.IsFor(build.Path) == true);
-        if (index < 0) return build.Status;
-        return index == 0 ? "downloading in another window" : "queued in another window";
-    }
-
-    private static bool SameFolder(string left, string right) =>
-        string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), StringComparison.OrdinalIgnoreCase);
-
-    private bool IsBusy(InstalledBuild build)
-    {
-        if (session.Downloads.Holds(build.Path))
-        {
-            Output.Blank();
-            Output.Warn("This build is in your downloads right now.");
-            Output.Hint("Checking it now would hash files that are still being written. Try again once it finishes.");
-            return true;
-        }
-
-        var ticket = DownloadQueue.Busy(session.Paths, build.Path);
-        if (ticket is null) return false;
-
-        Output.Blank();
-        Output.Warn($"Another window is working on this folder right now ({ticket.Action.ToLowerInvariant()} of {ticket.Build}).");
-        Output.Hint("Checking it now would hash files that are still being written. Try again once that finishes.");
-        return true;
     }
 
     private async Task BrowseAsync(CancellationToken cancellation)

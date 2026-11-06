@@ -9,4 +9,5 @@ namespace Legendary_Sharp.Application;
 [JsonSerializable(typeof(InstallRecord))]
 [JsonSerializable(typeof(QueueTicket))]
 [JsonSerializable(typeof(SavedQueue))]
+[JsonSerializable(typeof(ProbeCacheFile))]
 internal sealed partial class AppJson : JsonSerializerContext;

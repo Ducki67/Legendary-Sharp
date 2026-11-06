@@ -74,8 +74,12 @@ internal sealed class AppSettings
 
         try
         {
-            return JsonSerializer.Deserialize(File.ReadAllText(paths.SettingsFile), AppJson.Default.AppSettings)
-                   ?? new AppSettings();
+            var loaded = JsonSerializer.Deserialize(File.ReadAllText(paths.SettingsFile), AppJson.Default.AppSettings)
+                         ?? new AppSettings();
+
+            loaded.LibraryRoots ??= [];
+            loaded.Mirrors ??= [];
+            return loaded;
         }
         catch (Exception error) when (error is JsonException or IOException)
         {
@@ -101,6 +105,58 @@ internal sealed class AppSettings
     public void Save(AppPaths paths)
     {
         AtomicFile.WriteAllText(paths.SettingsFile, JsonSerializer.Serialize(this, AppJson.Default.AppSettings));
+    }
+
+    public bool TryAddLibrary(string path, AppPaths paths, out string error)
+    {
+        error = string.Empty;
+
+        var trimmed = path.Trim();
+
+        if (trimmed.Length == 0 || (trimmed.Length == 2 && char.IsAsciiLetter(trimmed[0]) && trimmed[1] == ':'))
+        {
+            error = "Pick a folder, not a whole drive.";
+            return false;
+        }
+
+        string full;
+        try
+        {
+            full = FolderPath.Normalize(trimmed);
+        }
+        catch (Exception problem) when (problem is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            error = "That is not a valid folder path.";
+            return false;
+        }
+
+        if (!Directory.Exists(full))
+        {
+            error = "That folder does not exist.";
+            return false;
+        }
+
+        var top = Path.GetPathRoot(full);
+        if (string.IsNullOrEmpty(top) || Path.TrimEndingDirectorySeparator(top).Length == full.Length)
+        {
+            error = "Pick a folder, not a whole drive.";
+            return false;
+        }
+
+        if (FolderPath.IsInside(full, paths.Root) || FolderPath.IsInside(paths.Root, full))
+        {
+            error = "That is where " + AppInfo.Name + " keeps its own data.";
+            return false;
+        }
+
+        if (LibraryRoots.Any(root => FolderPath.Same(root, full)) || FolderPath.Same(EffectiveInstallRoot, full))
+        {
+            error = "That folder is already in the list.";
+            return false;
+        }
+
+        LibraryRoots.Add(full);
+        return true;
     }
 
     public IEnumerable<string> ScanRoots()

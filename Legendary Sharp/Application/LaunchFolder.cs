@@ -1,10 +1,10 @@
+using Legendary_Sharp.Fortnite;
+
 namespace Legendary_Sharp.Application;
 
 internal static class LaunchFolder
 {
     private const string Marker = "builds";
-
-    private static readonly string[] BuildContents = ["FortniteGame", "Engine"];
 
     public static string? Detect()
     {
@@ -48,12 +48,12 @@ internal static class LaunchFolder
     {
         for (var folder = new DirectoryInfo(here); folder is not null; folder = folder.Parent)
         {
-            if (BuildContents.Any(name => string.Equals(folder.Name, name, StringComparison.OrdinalIgnoreCase)))
+            if (FortniteConstants.BuildContents.Any(name => string.Equals(folder.Name, name, StringComparison.OrdinalIgnoreCase)))
                 return true;
 
             try
             {
-                if (BuildContents.All(name => Directory.Exists(Path.Combine(folder.FullName, name))))
+                if (FortniteConstants.BuildContents.All(name => Directory.Exists(Path.Combine(folder.FullName, name))))
                     return true;
             }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException)
