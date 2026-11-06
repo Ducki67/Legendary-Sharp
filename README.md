@@ -60,6 +60,31 @@ Run it from a terminal inside a builds folder, any folder with "builds" in its p
 `D:\FortniteBuilds\ch3`, and it goes straight to picking a build and downloads it into a folder named
 after the build right there.
 
+## Commands
+
+Give `L#` a command and it runs without the menu, for scripts and AI agents. Add `--json` for output a
+program can read, progress then goes to stderr.
+
+```bash
+L# list --confirmed
+L# info 23.50-CL-24441668
+L# download 23.50-CL-24441668 --preset playable --folder D:\Builds\23.50
+L# verify D:\Builds\23.50 --json
+```
+
+| Command | Does |
+| --- | --- |
+| `list [text]` | Builds that can be downloaded, filtered by text, `--season`, `--confirmed` |
+| `info <build>` | Sizes per preset and tag, and how much of it Epic still hosts |
+| `download <build>` | Downloads and waits, `--preset` or `--tags`, `--folder`, `--skip-missing` |
+| `builds` | Builds you have installed |
+| `verify <folder>` | Hashes every file |
+| `repair <folder>` | Verifies, then downloads anything broken |
+
+Exit codes are 0 done, 1 failed, 2 wrong usage, 3 finished with files missing or broken, and 130 when
+stopped with Ctrl+C. Stopping keeps what is downloaded, so running the same command again carries on.
+`L# --help` lists everything.
+
 ## Install tags
 
 Tag naming changed three times. All three are understood, so presets and sizes are right on any build.
@@ -146,6 +171,8 @@ The code has no comments by design. If something needs one to be understood, it 
   [VastBlast/FortniteManifestArchive](https://github.com/VastBlast/FortniteManifestArchive) and
   [Mast3rGamers/UEFN-releases](https://github.com/Mast3rGamers/UEFN-releases) for the manifest archives.
 - Helix, for which builds still download in full and which tags each era needs.
+- [burlone0](https://github.com/burlone0) for mid-file resume, uninstall, changing install tags,
+  adding existing builds, and Linux support.
 
 ## License
 
