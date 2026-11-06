@@ -477,7 +477,18 @@ internal sealed class DownloadsScreen(Session session)
         try
         {
             if (Directory.Exists(folder))
-                Process.Start(new ProcessStartInfo("explorer.exe", $"\"{folder}\"") { UseShellExecute = false });
+            {
+                if (OperatingSystem.IsWindows())
+                {
+                    Process.Start(new ProcessStartInfo("explorer.exe", $"\"{folder}\"") { UseShellExecute = false });
+                }
+                else
+                {
+                    var start = new ProcessStartInfo(OperatingSystem.IsMacOS() ? "open" : "xdg-open") { UseShellExecute = false };
+                    start.ArgumentList.Add(folder);
+                    Process.Start(start);
+                }
+            }
         }
         catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException)
         {

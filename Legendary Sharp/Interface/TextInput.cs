@@ -169,7 +169,7 @@ internal sealed class TextInput
         if (text.Length == 0) return;
 
         var fullPath = _completePaths && IsFullPath(text);
-        if (fullPath) text = text.Trim().Trim('"');
+        if (fullPath) text = OperatingSystem.IsWindows() ? text.Trim().Trim('"') : text.Trim().Trim('"', '\'');
 
         if (_selected || fullPath)
         {
@@ -197,6 +197,12 @@ internal sealed class TextInput
     private static bool IsFullPath(string text)
     {
         var path = text.Trim().TrimStart('"');
+        if (!OperatingSystem.IsWindows())
+        {
+            path = path.TrimStart('\'');
+            return path.Length > 1 && path[0] == '/';
+        }
+
         if (path.Length < 3) return false;
         if (path.StartsWith(@"\\", StringComparison.Ordinal)) return true;
         return char.IsAsciiLetter(path[0]) && path[1] == ':' && path[2] is '\\' or '/';

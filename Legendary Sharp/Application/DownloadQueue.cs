@@ -98,10 +98,12 @@ internal static class DownloadQueue
     {
         try
         {
-            File.Delete(path);
-            return false;
+            using (new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+            }
         }
-        catch (UnauthorizedAccessException)
+        catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException
+                                          or UnauthorizedAccessException)
         {
             return false;
         }
@@ -109,6 +111,16 @@ internal static class DownloadQueue
         {
             return true;
         }
+
+        try
+        {
+            File.Delete(path);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+        }
+
+        return false;
     }
 
     private static QueueTicket? Read(string path)

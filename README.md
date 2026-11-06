@@ -35,6 +35,9 @@ and run it. No admin rights needed. It installs for your account only and adds:
 Running a newer msi updates it in place. Prefer no install? The plain `LegendarySharp-vX.Y.Z.exe` runs
 from anywhere.
 
+On Linux grab `LegendarySharp-vX.Y.Z-x86_64.AppImage`, `chmod +x` in the console and run it. The plain `LegendarySharp`
+linux binary works too.
+
 ## Use
 
 Run `L#` in a terminal or double click `LegendarySharp.exe`. Everything is in the menu:
@@ -103,12 +106,12 @@ turns with yours instead of fighting over bandwidth.
 
 ## Something went wrong
 
-Errors are saved to `%LOCALAPPDATA%\LegendarySharp\log.txt`. Attach it when you open an issue.
+Errors are saved to `%LOCALAPPDATA%\LegendarySharp\log.txt` on Windows and `~/.local/share/LegendarySharp/log.txt` on Linux. Attach it when you open an issue.
 
 ## Build it
 
 Needs the .NET 10 SDK. A Release build publishes the native single file exe automatically and drops it
-in `publish/`.
+in `publish/`, as `LegendarySharp.exe` on Windows and `LegendarySharp` on Linux.
 
 ```bash
 dotnet build "Legendary Sharp/Legendary Sharp.csproj" -c Release
@@ -116,6 +119,10 @@ dotnet build "Legendary Sharp/Legendary Sharp.csproj" -c Release
 
 The native step needs the Visual Studio C++ build tools. Without them the build still succeeds, it
 just warns and leaves you the managed build. Skip it deliberately with `-p:PublishAfterBuild=false`.
+
+Linux needs clang and the zlib dev package instead. `packaging/linux/build-appimage.sh` builds the
+AppImage into `publish/` inside an Ubuntu 22.04 container (needs podman or docker) so it runs on any
+distro with glibc 2.35 or newer.
 
 Debug builds never publish.
 
