@@ -10,6 +10,8 @@ internal sealed class InteractiveShell(Session session)
 
     private readonly string? _here = LaunchFolder.Detect();
 
+    private readonly Task<string?> _update = UpdateCheck.StartAsync(session);
+
     private enum MainAction
     {
         Download,
@@ -157,10 +159,19 @@ internal sealed class InteractiveShell(Session session)
 
     private IReadOnlyList<string> Banner()
     {
-        var jobs = session.Downloads.Snapshot();
-        if (jobs.Count == 0) return [];
-
         var lines = new List<string>();
+
+        if (_update is { IsCompletedSuccessfully: true, Result: { } latest })
+            lines.Add(Output.Indent + Theme.Emphasis("↑ ", Theme.Cyan) +
+                      Theme.Paint($"v{latest} is out, get it from {AppInfo.Repository}/releases", Theme.Cyan));
+
+        var jobs = session.Downloads.Snapshot();
+        if (jobs.Count == 0)
+        {
+            if (lines.Count > 0) lines.Add(string.Empty);
+            return lines;
+        }
+
         var running = jobs.FirstOrDefault(job => job.State == JobState.Running);
         var queued = jobs.Count(job => job.State is JobState.Queued or JobState.Waiting);
         var bar = Math.Clamp(ConsoleEx.Width - 60, 10, 28);

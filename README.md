@@ -32,7 +32,7 @@ and run it. No admin rights needed. It installs for your account only and adds:
 - a **Legendary C#** entry in the Windows Terminal dropdown
 - Start menu and desktop shortcuts
 
-Running a newer msi updates it in place. Prefer no install? The plain `LegendarySharp-vX.Y.Z.exe` runs
+Running a newer msi updates it in place, and the menu tells you when one is out. Prefer no install? The plain `LegendarySharp-vX.Y.Z.exe` runs
 from anywhere.
 
 ### Linux
