@@ -10,6 +10,9 @@ appdir="$root/publish/AppDir"
 output="$root/publish/LegendarySharp-v$version-x86_64.AppImage"
 icons="$appdir/usr/share/icons/hicolor/256x256/apps"
 
+tool_version="1.9.1"
+tool_sha256="ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"
+
 export ARCH=x86_64
 
 if command -v podman >/dev/null 2>&1; then
@@ -77,10 +80,12 @@ chmod +x "$appdir/AppRun" "$appdir/usr/bin/LegendarySharp"
 if command -v appimagetool >/dev/null 2>&1; then
   tool="appimagetool"
 else
-  tool="$root/tools/appimagetool-x86_64.AppImage"
+  tool="$root/tools/appimagetool-$tool_version-x86_64.AppImage"
   if [ ! -x "$tool" ]; then
     mkdir -p "$root/tools"
-    curl -fL -o "$tool" "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+    curl -fL -o "$tool.download" "https://github.com/AppImage/appimagetool/releases/download/$tool_version/appimagetool-x86_64.AppImage"
+    echo "$tool_sha256  $tool.download" | sha256sum -c - >/dev/null
+    mv "$tool.download" "$tool"
     chmod +x "$tool"
   fi
 fi

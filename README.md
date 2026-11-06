@@ -35,8 +35,11 @@ and run it. No admin rights needed. It installs for your account only and adds:
 Running a newer msi updates it in place. Prefer no install? The plain `LegendarySharp-vX.Y.Z.exe` runs
 from anywhere.
 
-On Linux grab `LegendarySharp-vX.Y.Z-x86_64.AppImage`, `chmod +x` in the console and run it. The plain `LegendarySharp`
-linux binary works too.
+### Linux
+
+Windows is the supported platform, and releases only ship Windows files. Linux works thanks to
+[burlone0](https://github.com/burlone0), but I can't test it, so build it yourself (see **Build it**) and
+send fixes as pull requests.
 
 ## Use
 
@@ -107,7 +110,8 @@ turns with yours instead of fighting over bandwidth.
 
 ## Something went wrong
 
-Errors are saved to `%LOCALAPPDATA%\LegendarySharp\log.txt` on Windows and `~/.local/share/LegendarySharp/log.txt` on Linux. Attach it when you open an issue.
+Errors are saved to `%LOCALAPPDATA%\LegendarySharp\log.txt`, or `~/.local/share/LegendarySharp/log.txt`
+on Linux. Attach it when you open an issue.
 
 ## Build it
 
@@ -121,16 +125,16 @@ dotnet build "Legendary Sharp/Legendary Sharp.csproj" -c Release
 The native step needs the Visual Studio C++ build tools. Without them the build still succeeds, it
 just warns and leaves you the managed build. Skip it deliberately with `-p:PublishAfterBuild=false`.
 
-Linux needs clang and the zlib dev package instead. `packaging/linux/build-appimage.sh` builds the
-AppImage into `publish/` inside an Ubuntu 22.04 container (needs podman or docker) so it runs on any
-distro with glibc 2.35 or newer.
+On Linux the native step needs clang and the zlib dev package instead. For an AppImage run
+`packaging/linux/build-appimage.sh`. It builds inside an Ubuntu 22.04 container (needs podman or docker),
+so the result runs on any distro with glibc 2.35 or newer, and drops it in `publish/`.
 
 Debug builds never publish.
 
 ## Contributing
 
-Most useful thing to add is confirmed builds. If you finish one that is not ticked, add its changelist
-to [`Fortnite/VerifiedBuilds.cs`](Legendary%20Sharp/Fortnite/VerifiedBuilds.cs).
+Pull requests are welcome. Most useful are fixes, and reports of builds that download differently from
+what [docs/BUILDS.md](docs/BUILDS.md) says.
 
 The code has no comments by design. If something needs one to be understood, it needs renaming.
 
