@@ -9,6 +9,7 @@ internal sealed class ResumeLog : IDisposable
 
     private readonly string _path;
     private StreamWriter? _writer;
+    private StreamWriter? _created;
 
     private ResumeLog(string path) => _path = path;
 
@@ -93,22 +94,18 @@ internal sealed class ResumeLog : IDisposable
         }
     }
 
-    public IReadOnlyList<FileEntry> TouchedFiles(BuildManifest manifest)
+    public void MarkCreated(FileEntry file) => CreatedWriter().WriteLine(file.FileName);
+
+    public IReadOnlyList<FileEntry> CreatedFiles(BuildManifest manifest)
     {
         var byName = manifest.Files.ToDictionary(file => file.FileName, StringComparer.Ordinal);
-        var touched = new Dictionary<string, FileEntry>(StringComparer.Ordinal);
+        var created = new Dictionary<string, FileEntry>(StringComparer.Ordinal);
 
-        foreach (var (hash, name) in Entries())
-            if (byName.TryGetValue(name, out var file) && HashMatches(hash, file))
-                touched[name] = file;
+        foreach (var name in Lines(CreatedPath))
+            if (byName.TryGetValue(name, out var file))
+                created[name] = file;
 
-        var saved = ReadPartial();
-        if (saved is not null
-            && byName.TryGetValue(saved.Value.Name, out var partial)
-            && HashMatches(saved.Value.Sha, partial))
-            touched[partial.FileName] = partial;
-
-        return [.. touched.Values];
+        return [.. created.Values];
     }
 
     public void Forget(IReadOnlySet<string> fileNames)
@@ -125,6 +122,12 @@ internal sealed class ResumeLog : IDisposable
             AtomicFile.WriteAllText(_path, kept.Count == 0 ? string.Empty : string.Join('\n', kept) + "\n");
         }
 
+        if (File.Exists(CreatedPath))
+        {
+            var kept = Lines(CreatedPath).Where(name => !fileNames.Contains(name)).ToList();
+            AtomicFile.WriteAllText(CreatedPath, kept.Count == 0 ? string.Empty : string.Join('\n', kept) + "\n");
+        }
+
         var saved = ReadPartial();
         if (saved is not null && fileNames.Contains(saved.Value.Name)) ClearPartial();
     }
@@ -134,21 +137,31 @@ internal sealed class ResumeLog : IDisposable
         Dispose();
         if (File.Exists(_path)) File.Delete(_path);
         if (File.Exists(PartialPath)) File.Delete(PartialPath);
+        if (File.Exists(CreatedPath)) File.Delete(CreatedPath);
     }
 
-    private StreamWriter Writer() => _writer ??= new StreamWriter(new FileStream(_path, FileMode.Append, FileAccess.Write, FileShare.Read))
-    {
-        AutoFlush = true
-    };
+    private StreamWriter Writer() => _writer ??= Append(_path);
 
-    private IEnumerable<(string Hash, string Name)> Entries()
-    {
-        if (!File.Exists(_path)) yield break;
+    private StreamWriter CreatedWriter() => _created ??= Append(CreatedPath);
 
-        using var stream = new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+    private static StreamWriter Append(string path) =>
+        new(new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read)) { AutoFlush = true };
+
+    private static IEnumerable<string> Lines(string path)
+    {
+        if (!File.Exists(path)) yield break;
+
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         using var reader = new StreamReader(stream);
 
         while (reader.ReadLine() is { } line)
+            if (line.Length > 0)
+                yield return line;
+    }
+
+    private IEnumerable<(string Hash, string Name)> Entries()
+    {
+        foreach (var line in Lines(_path))
         {
             var separator = line.IndexOf(':');
             if (separator <= 0) continue;
@@ -164,6 +177,8 @@ internal sealed class ResumeLog : IDisposable
     }
 
     private string PartialPath => Path.ChangeExtension(_path, ".partial");
+
+    private string CreatedPath => Path.ChangeExtension(_path, ".created");
 
     private (string Name, string Sha, long Size, int Parts, long Bytes)? ReadPartial()
     {
@@ -186,6 +201,8 @@ internal sealed class ResumeLog : IDisposable
     {
         _writer?.Dispose();
         _writer = null;
+        _created?.Dispose();
+        _created = null;
     }
 }
 

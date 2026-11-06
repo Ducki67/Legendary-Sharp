@@ -50,9 +50,10 @@ internal static class BuildMatcher
         if (sources.Count == 0)
         {
             var entries = catalog.Entries
-                .Where(entry => entry.HasManifest && (probe.Changelist is not null
+                .Where(entry => entry.HasManifest && !VerifiedBuilds.IsOtherPlatform(entry.Version))
+                .Where(entry => probe.Changelist is not null
                     ? entry.Changelist == probe.Changelist
-                    : entry.ShortVersion.Equals(probe.Version, StringComparison.OrdinalIgnoreCase)))
+                    : entry.ShortVersion.Equals(probe.Version, StringComparison.OrdinalIgnoreCase))
                 .DistinctBy(entry => entry.ManifestId)
                 .OrderByDescending(entry => long.TryParse(entry.Changelist, out var cl) ? cl : 0)
                 .Take(MaxCandidates);

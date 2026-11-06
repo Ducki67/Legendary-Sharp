@@ -36,7 +36,7 @@ internal static class InstallDiscard
         var state = InstallRecord.StateDirectory(root);
         if (!Directory.Exists(root) || !Directory.Exists(state)) return new DiscardOutcome(0, 0);
 
-        var touched = new List<FileEntry>();
+        var created = new List<FileEntry>();
         var failed = 0;
         var deleted = 0;
 
@@ -44,9 +44,9 @@ internal static class InstallDiscard
         {
             using var resume = ResumeLog.Open(state);
 
-            touched.AddRange(resume.TouchedFiles(request.Source.Manifest));
+            created.AddRange(resume.CreatedFiles(request.Source.Manifest));
 
-            var outcome = DeleteAll(root, touched, CancellationToken.None);
+            var outcome = DeleteAll(root, created, CancellationToken.None);
             deleted = outcome.Deleted;
             failed = outcome.Failed;
 
@@ -68,7 +68,7 @@ internal static class InstallDiscard
             failed++;
         }
 
-        Tidy(root, touched);
+        Tidy(root, created);
         return new DiscardOutcome(deleted, failed);
     }
 

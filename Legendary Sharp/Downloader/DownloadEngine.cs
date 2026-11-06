@@ -180,7 +180,7 @@ internal sealed class DownloadEngine(DownloadOptions options)
 
             ApplyAttributes(target, file);
             resume.MarkComplete(file);
-            resume.ClearPartial();
+            if (file.Size > CheckpointBytes || plan.Partial?.FileName == file.FileName) resume.ClearPartial();
             Interlocked.Increment(ref _filesDone);
         }
     }
@@ -201,7 +201,7 @@ internal sealed class DownloadEngine(DownloadOptions options)
 
         try
         {
-            if (partial is null) resume.SavePartial(file, 0, 0);
+            if (partial is null && !File.Exists(target)) resume.MarkCreated(file);
 
             await using var stream = await OpenTargetAsync(
                 target, file.FileName, partial is null ? FileMode.Create : FileMode.OpenOrCreate, cancellation)
@@ -243,7 +243,7 @@ internal sealed class DownloadEngine(DownloadOptions options)
                 try
                 {
                     stream.Flush(true);
-                    resume.SavePartial(file, doneParts, bytes);
+                    if (bytes > 0) resume.SavePartial(file, doneParts, bytes);
                 }
                 catch (IOException)
                 {
@@ -252,7 +252,7 @@ internal sealed class DownloadEngine(DownloadOptions options)
                 throw;
             }
 
-            stream.Flush(true);
+            if (file.Size > CheckpointBytes) stream.Flush(true);
             return null;
         }
         catch (Exception error) when (Skippable(error))

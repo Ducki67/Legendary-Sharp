@@ -6,6 +6,8 @@ namespace Legendary_Sharp.Application;
 
 internal sealed class DownloadManager : IDisposable
 {
+    internal const string DeletingMessage = "Deleting the files it created...";
+
     private static readonly TimeSpan TurnCheck = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan ShutdownGrace = TimeSpan.FromSeconds(5);
 
@@ -100,8 +102,6 @@ internal sealed class DownloadManager : IDisposable
         var outcome = await Task.Run(() => InstallDiscard.Run(job.Request, job.Root)).ConfigureAwait(false);
         job.Move(JobState.Cancelled, DiscardMessage(outcome));
     }
-
-    internal const string DeletingMessage = "Deleting the files it downloaded...";
 
     private static string DiscardMessage(DiscardOutcome outcome) => outcome.Failed > 0
         ? $"Cancelled, but {Format.Files(outcome.Failed)} {(outcome.Failed == 1 ? "is" : "are")} in use and left in the folder."

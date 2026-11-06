@@ -52,7 +52,7 @@ internal static class VerifiedBuilds
 
     private static string Files(int files) => files == 1 ? "1 file" : $"{files} files";
 
-    private static bool IsOtherPlatform(string version)
+    public static bool IsOtherPlatform(string version)
     {
         var changelist = Changelist(version);
         if (changelist.Length == 0) return false;

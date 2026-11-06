@@ -20,6 +20,7 @@ internal sealed class DownloadsScreen(Session session)
         Uefn,
         Open,
         Cancel,
+        Discard,
         Remove,
         Back
     }
@@ -379,24 +380,16 @@ internal sealed class DownloadsScreen(Session session)
                 break;
             case JobAction.Cancel:
                 Output.Blank();
-                var deletes = job.DiscardAllowed;
-
-                var question = deletes
-                    ? $"Cancel {job.Title}? The files it downloaded are deleted, nothing else in the folder is touched."
-                    : $"Stop {job.Title} and take it off the list? What is downloaded stays in the folder.";
-
-                if (Prompt.Ask(question, false) != true) break;
-
-                if (deletes)
-                {
-                    using (Spinner.Start(DownloadManager.DeletingMessage))
-                        await session.Downloads.CancelAsync(job.Id, true).ConfigureAwait(false);
-                }
-                else
-                {
+                if (Prompt.Ask($"Stop {job.Title} and take it off the list? What is downloaded stays in the folder.", false) == true)
                     await session.Downloads.CancelAsync(job.Id).ConfigureAwait(false);
-                }
+                break;
+            case JobAction.Discard:
+                Output.Blank();
+                if (Prompt.Ask($"Stop {job.Title} and delete the files it created? Files that were already in the folder are kept.", false) != true)
+                    break;
 
+                using (Spinner.Start(DownloadManager.DeletingMessage))
+                    await session.Downloads.CancelAsync(job.Id, true).ConfigureAwait(false);
                 break;
             case JobAction.Open:
                 OpenFolder(job.Root);
@@ -439,9 +432,7 @@ internal sealed class DownloadsScreen(Session session)
                 actions.Add(new(JobAction.Retry, "Try again", "carries on from where it stopped"));
                 break;
             case JobState.Cancelled:
-                actions.Add(new(JobAction.Retry, "Start again", job.DiscardAllowed
-                    ? "download it again from the start"
-                    : "carries on from what is already in the folder"));
+                actions.Add(new(JobAction.Retry, "Start again", "carries on from what is already in the folder"));
                 break;
             case JobState.Done:
                 actions.Add(new(JobAction.Result, "Show the result", "files written, speed and anything missing"));
@@ -454,7 +445,11 @@ internal sealed class DownloadsScreen(Session session)
         if (job.State is JobState.Done or JobState.Failed or JobState.Cancelled)
             actions.Add(new(JobAction.Remove, "Remove from the list", "the files stay where they are"));
         else
-            actions.Add(new(JobAction.Cancel, "Cancel", job.DiscardAllowed ? "stop it and delete only the files it downloaded" : "stop and take it off the list, the files stay"));
+        {
+            actions.Add(new(JobAction.Cancel, "Cancel", "stop and take it off the list, the files stay"));
+            if (job.DiscardAllowed)
+                actions.Add(new(JobAction.Discard, "Cancel and delete", "stop and delete the files it created, nothing else"));
+        }
 
         actions.Add(new(JobAction.Back, "Back", string.Empty));
         return actions;

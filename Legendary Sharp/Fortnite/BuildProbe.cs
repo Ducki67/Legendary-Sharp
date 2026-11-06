@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Legendary_Sharp.Application;
 using Legendary_Sharp.Downloader;
@@ -11,20 +12,20 @@ internal sealed record BuildProbe(string Version, string? Changelist, string Sou
 
 internal sealed class ProbeCacheEntry
 {
-    public string Key { get; set; } = string.Empty;
+    [JsonPropertyName("key")] public string Key { get; set; } = string.Empty;
 
-    public long Length { get; set; }
+    [JsonPropertyName("length")] public long Length { get; set; }
 
-    public long Ticks { get; set; }
+    [JsonPropertyName("ticks")] public long Ticks { get; set; }
 
-    public string? Version { get; set; }
+    [JsonPropertyName("version")] public string? Version { get; set; }
 
-    public string? Changelist { get; set; }
+    [JsonPropertyName("changelist")] public string? Changelist { get; set; }
 }
 
 internal sealed class ProbeCacheFile
 {
-    public List<ProbeCacheEntry> Entries { get; set; } = [];
+    [JsonPropertyName("entries")] public List<ProbeCacheEntry> Entries { get; set; } = [];
 }
 
 internal static partial class BuildProbes

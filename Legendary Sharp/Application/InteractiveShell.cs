@@ -277,7 +277,7 @@ internal sealed class InteractiveShell(Session session)
             {
                 foreach (var job in saved) await RestoreJobAsync(job, false, cancellation).ConfigureAwait(false);
             }
-            else if (Prompt.Ask("Delete what they downloaded so far?", false) == true)
+            else if (Prompt.Ask("Delete the files they created so far? Files that were already there are kept.", false) == true)
             {
                 await DiscardSavedAsync(saved, paused, cancellation).ConfigureAwait(false);
             }

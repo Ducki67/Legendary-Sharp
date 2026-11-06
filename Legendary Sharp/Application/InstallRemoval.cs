@@ -14,6 +14,8 @@ internal static class InstallRemoval
     {
         var union = new Dictionary<string, FileEntry>(StringComparer.Ordinal);
 
+        MarkIncomplete(root);
+
         foreach (var file in baseFiles) union.TryAdd(file.FileName, file);
         if (addonFiles is not null)
             foreach (var file in addonFiles) union.TryAdd(file.FileName, file);
@@ -35,6 +37,20 @@ internal static class InstallRemoval
 
         InstallDiscard.Tidy(root, union.Values);
         return outcome;
+    }
+
+    private static void MarkIncomplete(string root)
+    {
+        if (InstallRecord.TryLoad(root) is not { IsComplete: true } record) return;
+
+        try
+        {
+            record.CompletedUtc = null;
+            record.Save(root);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+        }
     }
 
     public static DiscardOutcome RemoveTags(
