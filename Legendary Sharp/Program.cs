@@ -1,3 +1,3 @@
 using Legendary_Sharp.Application;
 
-return await Bootstrap.RunAsync();
+return await Bootstrap.RunAsync(args);

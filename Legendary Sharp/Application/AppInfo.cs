@@ -6,6 +6,8 @@ internal static class AppInfo
 {
     public const string Name = "Legendary Sharp";
 
+    public const string Command = "L#";
+
     public const string Author = "Ducki67";
 
     public const string Tagline =

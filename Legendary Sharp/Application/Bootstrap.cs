@@ -4,9 +4,17 @@ namespace Legendary_Sharp.Application;
 
 internal static class Bootstrap
 {
-    public static async Task<int> RunAsync()
+    public static async Task<int> RunAsync(string[] args)
     {
         ConsoleEx.Initialise();
+
+        Console.CancelKeyPress += (_, eventArgs) =>
+        {
+            eventArgs.Cancel = true;
+            Interrupt.Signal();
+        };
+
+        if (args.Length > 0) return await CommandLine.RunAsync(args).ConfigureAwait(false);
 
         try
         {
@@ -16,20 +24,14 @@ internal static class Bootstrap
         {
         }
 
-        Console.CancelKeyPress += (_, eventArgs) =>
-        {
-            eventArgs.Cancel = true;
-            Interrupt.Signal();
-        };
-
         if (!ConsoleEx.IsInteractive)
         {
             Logo.Render(AppInfo.Tagline);
             Output.Blank();
-            Output.Warn($"{AppInfo.Name} is an interactive app and needs a real console window.");
+            Output.Warn($"The menu needs a real console window. Scripts can use commands, see {AppInfo.Command} --help.");
             Output.Hint("Double click the exe, or run it from Terminal, PowerShell or cmd.");
             Output.Blank();
-            return 2;
+            return CommandLine.UsageError;
         }
 
         ConsoleEx.EnterAppScreen();

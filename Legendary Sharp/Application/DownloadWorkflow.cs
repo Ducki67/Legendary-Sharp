@@ -305,7 +305,7 @@ internal static class DownloadWorkflow
         return $"{tags.Count} of {available}: {string.Join(", ", names)}";
     }
 
-    private static int? KnownMissing(DownloadRequest request, BuildManifest manifest)
+    internal static int? KnownMissing(DownloadRequest request, BuildManifest manifest)
     {
         var groups = InstallTagCatalog.Summarise(manifest);
         var chosen = new HashSet<string>(request.Tags ?? TagPresets.Intersect(TagPresets.Full.Resolve(groups), manifest),
@@ -319,7 +319,7 @@ internal static class DownloadWorkflow
             : VerifiedBuilds.MissingFor(request.Source.Release?.Version ?? manifest.ShortVersion, preset.Key);
     }
 
-    private static bool HasRoomOnDisk(string root, DownloadPlan plan, out long free)
+    internal static bool HasRoomOnDisk(string root, DownloadPlan plan, out long free)
     {
         free = long.MaxValue;
 
