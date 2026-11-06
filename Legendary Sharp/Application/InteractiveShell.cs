@@ -1,4 +1,3 @@
-using Legendary_Sharp.Downloader;
 using Legendary_Sharp.Downloader.Manifest;
 using Legendary_Sharp.Fortnite;
 using Legendary_Sharp.Interface;
@@ -21,20 +20,11 @@ internal sealed class InteractiveShell(Session session)
         Quit
     }
 
-    private enum BrowseAction
-    {
-        Download,
-        Check,
-        Info,
-        Tags,
-        Back
-    }
-
     public async Task<int> RunAsync()
     {
         try
         {
-            await RestoreAsync(Interrupt.Begin()).ConfigureAwait(false);
+            await new QueueRestore(session).RunAsync(Interrupt.Begin()).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -70,7 +60,7 @@ internal sealed class InteractiveShell(Session session)
                         await new LibraryScreen(session).RunAsync(cancellation).ConfigureAwait(false);
                         break;
                     case MainAction.Browse:
-                        await BrowseAsync(cancellation).ConfigureAwait(false);
+                        await new BrowseScreen(session, DownloadEntryAsync).RunAsync(cancellation).ConfigureAwait(false);
                         break;
                     case MainAction.Settings:
                         Settings();
@@ -253,147 +243,6 @@ internal sealed class InteractiveShell(Session session)
         return Prompt.Ask("Quit anyway?", false) == true;
     }
 
-    private async Task RestoreAsync(CancellationToken cancellation)
-    {
-        var taken = QueueStore.TakeAbandoned(session.Paths, out var claims);
-        var saved = taken.Where(job => !job.Paused).ToList();
-        var paused = taken.Where(job => job.Paused).ToList();
-
-        if (saved.Count > 0)
-        {
-            Header();
-            Output.Section("Unfinished downloads");
-            Output.Info(saved.Count == 1
-                ? "A download was still queued when the app last closed."
-                : $"{saved.Count} downloads were still queued when the app last closed.");
-            Output.Blank();
-
-            foreach (var job in saved.Take(8)) Output.Bullet($"{job.Build}   {job.Root}");
-            if (saved.Count > 8) Output.Detail($"and {saved.Count - 8} more");
-
-            Output.Blank();
-
-            if (Prompt.Ask("Pick them back up?") == true)
-            {
-                foreach (var job in saved) await RestoreJobAsync(job, false, cancellation).ConfigureAwait(false);
-            }
-            else if (Prompt.Ask("Delete the files they created so far? Files that were already there are kept.", false) == true)
-            {
-                await DiscardSavedAsync(saved, paused, cancellation).ConfigureAwait(false);
-            }
-        }
-
-        if (paused.Count > 0)
-        {
-            if (saved.Count == 0)
-            {
-                Header();
-                Output.Section("Unfinished downloads");
-            }
-
-            Output.Info("Restoring your downloads...");
-        }
-
-        foreach (var job in paused) await RestoreJobAsync(job, true, cancellation).ConfigureAwait(false);
-
-        QueueStore.Release(claims);
-    }
-
-    private async Task RestoreJobAsync(SavedJob job, bool paused, CancellationToken cancellation)
-    {
-        try
-        {
-            var source = await RestoreSourceAsync(job, cancellation).ConfigureAwait(false);
-            var restored = DownloadWorkflow.CreateQuietly(session, RestoreRequest(job, source));
-            if (paused)
-            {
-                restored.Move(JobState.Paused, "Paused, progress is saved.");
-                restored.UserPaused = true;
-            }
-            session.Downloads.Enqueue(restored);
-        }
-        catch (Exception error) when (error is not OperationCanceledException || !cancellation.IsCancellationRequested)
-        {
-            Output.Warn($"{job.Build} could not be picked back up: {error.Message}");
-            ErrorLog.Write(error, $"restore {job.Build}");
-        }
-    }
-
-    private static DownloadRequest RestoreRequest(SavedJob job, ResolvedManifest source) => new()
-    {
-        Source = source,
-        InstallRoot = job.Root,
-        Tags = job.Tags,
-        IsAddon = job.IsAddon,
-        SkipMissing = job.SkipMissing
-    };
-
-    private async Task DiscardSavedAsync(List<SavedJob> saved, List<SavedJob> paused, CancellationToken cancellation)
-    {
-        var skipped = 0;
-        var prepared = new List<(SavedJob Job, DownloadRequest Request)>();
-
-        foreach (var job in saved)
-        {
-            try
-            {
-                var request = RestoreRequest(job, await RestoreSourceAsync(job, cancellation).ConfigureAwait(false));
-                if (InstallDiscard.IsAllowed(request, job.Root)) prepared.Add((job, request));
-                else skipped++;
-            }
-            catch (Exception error) when (error is not OperationCanceledException)
-            {
-                skipped++;
-                Output.Warn($"{job.Build} could not be cleaned up: {error.Message}");
-                ErrorLog.Write(error, $"discard {job.Build}");
-            }
-        }
-
-        var deleted = 0;
-        var failed = 0;
-
-        foreach (var (job, request) in prepared)
-        {
-            var full = Path.GetFullPath(job.Root);
-
-            if (session.Downloads.Holds(job.Root) || DownloadQueue.Busy(session.Paths, job.Root) is not null ||
-                paused.Any(other => string.Equals(Path.GetFullPath(other.Root), full, StringComparison.OrdinalIgnoreCase)))
-            {
-                skipped++;
-                continue;
-            }
-
-            DiscardOutcome outcome;
-
-            using (Spinner.Start($"Deleting the files {job.Build} downloaded"))
-                outcome = await Task.Run(() => InstallDiscard.Run(request, job.Root), cancellation).ConfigureAwait(false);
-
-            deleted += outcome.Deleted;
-            failed += outcome.Failed;
-        }
-
-        Output.Success($"Deleted {Format.Count(deleted)} files.");
-        if (failed > 0) Output.Warn($"{Format.Count(failed)} files are in use and were left in the folder.");
-        if (skipped > 0) Output.Hint(skipped == 1 ? "1 download was left as it is." : $"{skipped} downloads were left as they are.");
-    }
-
-    private async Task<ResolvedManifest> RestoreSourceAsync(SavedJob job, CancellationToken cancellation)
-    {
-        var stored = job.IsAddon ? InstallRecord.UefnManifestPath(job.Root) : InstallRecord.ManifestPath(job.Root);
-
-        if (File.Exists(stored))
-            return new ResolvedManifest(
-                await ManifestLoader.LoadFileAsync(stored, cancellation).ConfigureAwait(false),
-                job.ManifestId, "install folder", null);
-
-        using (Spinner.Start($"Reading the manifest for {job.Build}"))
-        {
-            return await ManifestResolver
-                .ResolveAsync(job.ManifestId, session.Http, session.Paths, null, cancellation)
-                .ConfigureAwait(false);
-        }
-    }
-
     private async Task<ReleaseEntry?> PickReleaseAsync(CancellationToken cancellation)
     {
         var catalog = await Spinner
@@ -483,129 +332,5 @@ internal sealed class InteractiveShell(Session session)
         return Prompt.Path("Install folder", suggestion);
     }
 
-    private async Task BrowseAsync(CancellationToken cancellation)
-    {
-        var catalog = await Spinner
-            .Run("Loading the release index", () => session.CatalogAsync(false, cancellation))
-            .ConfigureAwait(false);
-
-        var entries = catalog.Entries.ToList();
-        var confirmed = entries.Count(entry => entry.IsVerified);
-        var withManifest = entries.Count(entry => entry.HasManifest);
-
-        var choices = entries
-            .Select(entry => new Choice<ReleaseEntry>(entry, entry.Version, BrowseNote(entry), entry.HasManifest))
-            .ToList();
-
-        var status = $"{Format.Count(entries.Count)} builds   ·   " +
-                     $"{Format.Count(withManifest)} downloadable   ·   {Format.Count(confirmed)} confirmed";
-
-        while (true)
-        {
-            Header();
-
-            if (!SelectionList<ReleaseEntry>.TryPick("Browse every known build", choices, out var entry,
-                    $"{Hints.Move}   {Hints.Jump}   type to filter   {Hints.Open}   esc back",
-                    status)) return;
-
-            if (!await InspectAsync(entry, cancellation).ConfigureAwait(false)) return;
-        }
-    }
-
-    private static string BrowseNote(ReleaseEntry entry)
-    {
-        var parts = new List<string>();
-
-        if (entry.IsVerified) parts.Add("✓");
-        else if (!entry.HasManifest) parts.Add("no manifest");
-        else if (entry.IsKnownPatchy) parts.Add("!");
-
-        parts.Add(entry.Season);
-        if (entry.BuildDate.Length > 0) parts.Add(entry.BuildDate);
-        if (entry.EngineVersion.Length > 0) parts.Add("UE " + entry.EngineVersion);
-        if (entry.Notes.Length > 0) parts.Add(entry.Notes);
-        return string.Join("   ", parts);
-    }
-
-    private async Task<bool> InspectAsync(ReleaseEntry entry, CancellationToken cancellation)
-    {
-        while (true)
-        {
-            Header();
-            Output.Section(entry.Version);
-
-            var panel = new Panel()
-                .Row("Season", entry.Season, Theme.Cyan)
-                .Row("Status", entry.IsVerified
-                    ? "confirmed to download in full"
-                    : entry.IsKnownPatchy
-                        ? VerifiedBuilds.MissingNote(entry.Version) is { } note
-                            ? $"Epic has pruned chunks, {note} whatever tags you pick"
-                            : "Epic has pruned chunks, expect gaps"
-                        : "not confirmed either way, run a check");
-
-            if (entry.BuildDate.Length > 0) panel.Row("Build date", entry.BuildDate);
-            if (entry.EngineVersion.Length > 0) panel.Row("Engine version", entry.EngineVersion);
-            if (entry.NetCl.Length > 0) panel.Row("Net CL", entry.NetCl);
-            if (entry.Notes.Length > 0) panel.Row("Notes", entry.Notes);
-
-            panel.Row("Manifest", entry.HasManifest ? entry.ManifestId : "none archived",
-                entry.HasManifest ? null : Theme.Warning);
-
-            panel.Render();
-
-            var actions = new List<Choice<BrowseAction>>
-            {
-                new(BrowseAction.Download, "Download this build", "pick install tags and a folder", entry.HasManifest),
-                new(BrowseAction.Check, "Check availability", "sample the CDN for missing chunks", entry.HasManifest),
-                new(BrowseAction.Info, "Show manifest details", "files, chunks and sizes", entry.HasManifest),
-                new(BrowseAction.Tags, "Show install tags", "what each tag costs", entry.HasManifest),
-                new(BrowseAction.Back, "Back to the list", string.Empty)
-            };
-
-            if (!SelectionList<BrowseAction>.TryPick("What next?", actions, out var action)) return true;
-
-            switch (action)
-            {
-                case BrowseAction.Back:
-                    return true;
-
-                case BrowseAction.Download:
-                    await DownloadEntryAsync(entry, cancellation).ConfigureAwait(false);
-                    return true;
-
-                case BrowseAction.Check:
-                    await BuildView
-                        .ShowAvailabilityAsync(session, await ResolveAsync(entry, cancellation).ConfigureAwait(false),
-                            cancellation)
-                        .ConfigureAwait(false);
-                    ConsoleEx.PauseForKey("Press any key to go back.");
-                    continue;
-
-                case BrowseAction.Info:
-                    BuildView.ShowInfo(await ResolveAsync(entry, cancellation).ConfigureAwait(false));
-                    ConsoleEx.PauseForKey("Press any key to go back.");
-                    continue;
-
-                case BrowseAction.Tags:
-                    BuildView.ShowTags((await ResolveAsync(entry, cancellation).ConfigureAwait(false)).Manifest);
-                    ConsoleEx.PauseForKey("Press any key to go back.");
-                    continue;
-            }
-        }
-    }
-
     private void Settings() => new SettingsScreen(session).Run();
-
-    private async Task<ResolvedManifest> ResolveAsync(ReleaseEntry entry, CancellationToken cancellation)
-    {
-        var catalog = await session.CatalogAsync(false, cancellation).ConfigureAwait(false);
-
-        using (Spinner.Start($"Reading the manifest for {entry.Version}"))
-        {
-            return await ManifestResolver
-                .ResolveAsync(entry.ManifestId, session.Http, session.Paths, catalog, cancellation)
-                .ConfigureAwait(false);
-        }
-    }
 }
