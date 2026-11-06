@@ -2,7 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [main]
+    branches: [Linux-beta]
   pull_request:
   workflow_dispatch:
 
@@ -29,3 +29,33 @@ jobs:
           $list = ./publish/LegendarySharp.exe list --confirmed --json | ConvertFrom-Json
           if ($list.Count -eq 0) { throw 'list returned nothing' }
           "$($list.Count) confirmed builds"
+
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Native tools
+        run: sudo apt-get install -y --no-install-recommends clang zlib1g-dev
+
+      - name: Build
+        run: dotnet build "Legendary Sharp/Legendary Sharp.csproj" -c Release
+
+      - name: Smoke test
+        run: |
+          ./publish/LegendarySharp --version
+          ./publish/LegendarySharp list --confirmed --json | jq -e 'length > 0'
+          ./publish/LegendarySharp info 21.10-CL-20696680 --json | jq -e '.files > 0'
+
+      - name: Download and verify a real build
+        run: |
+          ./publish/LegendarySharp download 21.10-CL-20696680 --preset minimal --folder "$RUNNER_TEMP/build" --json | jq -e '.status == "done" and (.missing | length) == 0'
+          ./publish/LegendarySharp verify "$RUNNER_TEMP/build" --json | jq -e '.healthy'
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: LegendarySharp-linux-x64
+          path: publish/LegendarySharp

@@ -8,6 +8,11 @@ built for pulling old builds from Epic's CDN.
 
 **No Epic account needed.** Manifests come from public archives, chunks come from Epic's public CDN.
 
+> [!IMPORTANT]
+> **This is the Linux-beta branch.** Linux support, thanks to [burlone0](https://github.com/burlone0), is a
+> community beta. I build and test on Windows only, so there are no Linux downloads in the releases: you
+> build it yourself, test it, and send fixes back as pull requests to this branch. Windows users want the
+> [main branch](https://github.com/Ducki67/Legendary-Sharp) and its releases.
 
 
 - Single 8 MB native exe with no dependencies, or a small installer that adds it to your terminal
@@ -37,9 +42,16 @@ The plain `LegendarySharp-vX.Y.Z.exe` runs from anywhere.
 
 ### Linux
 
-Releases are Windows only. Linux support, thanks to [burlone0](https://github.com/burlone0), lives on the
-[Linux-beta](https://github.com/Ducki67/Legendary-Sharp/tree/Linux-beta) branch as a community beta: you
-build it yourself, and fixes come back as pull requests.
+Build it yourself, see **Build it** below. The native single file ends up as `publish/LegendarySharp`, or
+make an AppImage that runs on any distro with glibc 2.35 or newer. Run it from any terminal, the menu and
+the commands are the same as on Windows, only the paths are Linux ones: settings and the log live in
+`~/.local/share/LegendarySharp`, and downloads go to `FortniteBuilds` in your Documents folder, or your home folder if there is none.
+
+Every push to this branch is built on Ubuntu by GitHub, which downloads a real build and verifies every
+file, so a broken Linux build shows up straight away. The menu itself is only tested by people using it.
+
+**Help test it.** If something does not work, open an issue and say it is Linux, with your distro, terminal
+and `log.txt`. Fixes are welcome as pull requests to the `Linux-beta` branch.
 
 ## Use
 
@@ -135,12 +147,13 @@ turns with yours instead of fighting over bandwidth.
 
 ## Something went wrong
 
-Errors are saved to `%LOCALAPPDATA%\LegendarySharp\log.txt`. Attach it when you open an issue.
+Errors are saved to `%LOCALAPPDATA%\LegendarySharp\log.txt`, or `~/.local/share/LegendarySharp/log.txt`
+on Linux. Attach it when you open an issue.
 
 ## Build it
 
 Needs the .NET 10 SDK. A Release build publishes the native single file exe automatically and drops it
-in `publish/` as `LegendarySharp.exe`.
+in `publish/`, as `LegendarySharp.exe` on Windows and `LegendarySharp` on Linux.
 
 ```bash
 dotnet build "Legendary Sharp/Legendary Sharp.csproj" -c Release
@@ -148,6 +161,10 @@ dotnet build "Legendary Sharp/Legendary Sharp.csproj" -c Release
 
 The native step needs the Visual Studio C++ build tools. Without them the build still succeeds, it
 just warns and leaves you the managed build. Skip it deliberately with `-p:PublishAfterBuild=false`.
+
+On Linux the native step needs clang and the zlib dev package instead. For an AppImage run
+`packaging/linux/build-appimage.sh`. It builds inside an Ubuntu 22.04 container (needs podman or docker),
+so the result runs on any distro with glibc 2.35 or newer, and drops it in `publish/`.
 
 Debug builds never publish.
 

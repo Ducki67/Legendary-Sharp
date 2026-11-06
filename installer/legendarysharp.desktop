@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Legendary C#
+Exec=LegendarySharp
+Icon=legendarysharp
+Terminal=true
+Categories=Utility;
