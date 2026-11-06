@@ -35,12 +35,6 @@ internal sealed class Spinner : IDisposable
         return await work().ConfigureAwait(false);
     }
 
-    public void Succeed(string message)
-    {
-        Stop();
-        Output.Success(message);
-    }
-
     public void Fail(string message)
     {
         Stop();

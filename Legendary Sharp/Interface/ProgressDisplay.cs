@@ -48,16 +48,6 @@ internal sealed class ProgressDisplay : IDisposable
         }
     }
 
-    public void Log(string line)
-    {
-        lock (_gate)
-        {
-            Erase();
-            ConsoleEx.WriteLine(line);
-            _lastPaint = DateTime.MinValue;
-        }
-    }
-
     public void Finish()
     {
         lock (_gate)

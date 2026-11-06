@@ -48,8 +48,6 @@ internal static partial class ConsoleInput
 
     public static bool ClickAvailable => _enabled && _mode == PointerMode.Full;
 
-    public static bool PointerAvailable => ScrollAvailable;
-
     public static void Apply(PointerMode mode)
     {
         _mode = mode;

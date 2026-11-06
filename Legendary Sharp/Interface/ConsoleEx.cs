@@ -47,11 +47,6 @@ internal static partial class ConsoleEx
         lock (Gate) Console.Out.Write(text + Environment.NewLine);
     }
 
-    public static void Atomic(Action action)
-    {
-        lock (Gate) action();
-    }
-
     public static int Repaint(int previous, IReadOnlyList<string> lines)
     {
         var builder = new StringBuilder();

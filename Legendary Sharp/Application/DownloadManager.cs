@@ -33,8 +33,6 @@ internal sealed class DownloadManager : IDisposable
         lock (_gate) return [.. _jobs.Select(job => job.View())];
     }
 
-    public bool HasActive => Snapshot().Any(job => job.IsActive);
-
     public bool Holds(string folder) => Any(folder, job => job.IsActive);
 
     public bool Claims(string folder) => Any(folder, job => !job.IsFinished);

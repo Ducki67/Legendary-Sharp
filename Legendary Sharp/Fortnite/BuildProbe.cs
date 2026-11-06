@@ -46,9 +46,6 @@ internal static partial class BuildProbes
 
     private static readonly bool[] Modes = [false, true];
 
-    public static BuildProbe? Read(string root, AppPaths paths) =>
-        ReadAll([root], paths).GetValueOrDefault(root);
-
     public static IReadOnlyDictionary<string, BuildProbe?> ReadAll(IEnumerable<string> roots, AppPaths paths)
     {
         var cache = LoadCache(paths);

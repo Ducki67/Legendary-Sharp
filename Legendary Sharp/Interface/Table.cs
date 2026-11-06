@@ -19,8 +19,6 @@ internal sealed class Table
         return this;
     }
 
-    public int RowCount => _rows.Count;
-
     public void Render()
     {
         if (_columns.Count == 0) return;

@@ -191,6 +191,4 @@ internal sealed class SettingsScreen(Session session)
         PointerMode.Scroll => "scroll to move, arrows and enter to pick",
         _ => "scroll to move, click to pick"
     };
-
-    public static string DefaultRoot() => AppSettings.DefaultInstallRoot();
 }

@@ -30,9 +30,6 @@ internal static class Prompt
         return answer is null ? null : int.Parse(answer.Trim());
     }
 
-    public static bool Confirm(string question, bool defaultValue = true) =>
-        ConfirmPrompt.Ask(question, defaultValue) == true;
-
     public static bool? Ask(string question, bool defaultValue = true) =>
         ConfirmPrompt.Ask(question, defaultValue);
 

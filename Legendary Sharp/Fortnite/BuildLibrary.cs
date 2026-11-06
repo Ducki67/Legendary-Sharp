@@ -6,9 +6,6 @@ internal sealed record InstalledBuild(string Path, InstallRecord Record)
 {
     public string Name => System.IO.Path.GetFileName(Path);
 
-    public bool HasClient => File.Exists(System.IO.Path.Combine(
-        Path, FortniteConstants.BinariesFolder, FortniteConstants.ShippingExecutable));
-
     public string Status => Record.IsComplete
         ? Record.HasUnavailable ? $"complete, {Record.Unavailable.Count} not hosted" : "complete"
         : "incomplete";
@@ -59,18 +56,6 @@ internal static class BuildLibrary
 
         return ([.. managed.OrderBy(build => build.Record.BuildVersion, StringComparer.Ordinal)], unmanaged);
     }
-
-    public static IReadOnlyList<UnmanagedBuild> ScanUnmanaged(
-        IEnumerable<string> roots, IReadOnlyCollection<string> managedPaths)
-    {
-        var managed = new HashSet<string>(
-            managedPaths.Where(path => !string.IsNullOrWhiteSpace(path)).Select(FolderPath.Normalize),
-            StringComparer.OrdinalIgnoreCase);
-
-        return [.. ScanAll(roots).Unmanaged.Where(build => !managed.Contains(build.Path))];
-    }
-
-    public static bool IsBuildFolder(string path) => InstallRecord.TryLoad(path) is not null;
 
     private static bool LooksLikeBuild(string path)
     {
