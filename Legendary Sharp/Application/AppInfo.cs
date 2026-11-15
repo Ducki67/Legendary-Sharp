@@ -17,11 +17,16 @@ internal static class AppInfo
 
     public const string Repository = "https://github.com/Ducki67/Legendary-Sharp";
 
-    public static readonly string Version = Resolve();
+    private static readonly System.Version? Assembly = typeof(AppInfo).Assembly.GetName().Version;
 
-    private static string Resolve()
-    {
-        var version = typeof(AppInfo).Assembly.GetName().Version;
-        return version is null ? "1.0.0" : $"{version.Major}.{version.Minor}.{version.Build}";
-    }
+    public static readonly string Version = Assembly is null ? "1.0.0"
+        : Assembly.Revision > 0 ? Assembly.ToString(4) : Assembly.ToString(3);
+
+    public static readonly string Label = Assembly is null ? "1.0.0"
+        : Assembly.Revision switch
+        {
+            <= 0 => Assembly.ToString(3),
+            1 => $"{Assembly.ToString(3)} hotfix",
+            var number => $"{Assembly.ToString(3)} hotfix {number}"
+        };
 }

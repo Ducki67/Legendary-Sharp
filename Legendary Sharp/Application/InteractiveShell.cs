@@ -115,14 +115,25 @@ internal sealed class InteractiveShell(Session session)
             new(MainAction.Quit, "Quit", string.Empty)
         };
 
-        if (_update is { IsCompletedSuccessfully: true, Result: { } latest } && Updater.CanUpdate)
-            choices.Insert(0, new(MainAction.Update, $"Update to v{latest}", Updater.IsInstalled
-                ? "runs the new installer, the app closes while it updates"
-                : "downloads the new exe and swaps it in"));
+        Choice<MainAction>? update = null;
 
-        return SelectionList<MainAction>.TryPick("What would you like to do?", choices, out action, banner: Banner)
+        if (_update is { IsCompletedSuccessfully: true, Result: { } latest } && Updater.CanUpdate)
+        {
+            update = new(MainAction.Update, $"Update to v{latest}", Updater.IsInstalled
+                ? "runs the new installer, the app closes while it updates"
+                : "downloads the new exe and swaps it in");
+            choices.Insert(0, update);
+        }
+
+        return SelectionList<MainAction>.TryPick("What would you like to do?", choices, out action, banner: Banner,
+                   shortcut: key => Updater.IsInstalled && IsUpdateShortcut(key) ? update : null)
                && action != MainAction.Quit;
     }
+
+    private static bool IsUpdateShortcut(ConsoleKeyInfo key) =>
+        key.Key == ConsoleKey.U &&
+        key.Modifiers.HasFlag(ConsoleModifiers.Control) &&
+        key.Modifiers.HasFlag(ConsoleModifiers.Shift);
 
     private async Task DownloadAsync(CancellationToken cancellation)
     {
@@ -265,7 +276,9 @@ internal sealed class InteractiveShell(Session session)
 
         if (_update is { IsCompletedSuccessfully: true, Result: { } latest })
             lines.Add(Output.Indent + Theme.Emphasis("↑ ", Theme.Cyan) +
-                      Theme.Paint($"v{latest} is out, get it from {AppInfo.Repository}/releases", Theme.Cyan));
+                      Theme.Paint(Updater.IsInstalled
+                          ? $"v{latest} is out, press Ctrl+Shift+U to install it"
+                          : $"v{latest} is out, get it from {AppInfo.Repository}/releases", Theme.Cyan));
 
         var jobs = session.Downloads.Snapshot();
         if (jobs.Count == 0)
