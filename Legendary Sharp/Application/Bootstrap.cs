@@ -47,7 +47,7 @@ internal static class Bootstrap
 
             ConsoleEx.LeaveAppScreen();
             if (shell.Farewell is { } farewell) Output.Line(Theme.Paint(farewell, Theme.Cyan));
-            Output.Line(Theme.Paint("Thanks for using " + AppInfo.Name + " v" + AppInfo.Version + ", made by " + AppInfo.Author + ".", Theme.Muted));
+            Output.Line(Theme.Paint("Thanks for using " + AppInfo.Name + " v" + AppInfo.Label + ", made by " + AppInfo.Author + ".", Theme.Muted));
             Output.Line(Theme.Paint(AppInfo.Repository, Theme.Dim));
             return code;
         }

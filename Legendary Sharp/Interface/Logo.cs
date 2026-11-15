@@ -11,7 +11,7 @@ internal static class Logo
         "██      █████   ██   ███ █████   ██ ██  ██ ██   ██ ███████ ██████    ████      ██       ██ ██ ",
         "██      ██      ██    ██ ██      ██  ██ ██ ██   ██ ██   ██ ██   ██    ██       ██      ███████",
         "███████ ███████  ██████  ███████ ██   ████ ██████  ██   ██ ██   ██    ██        ██████  ██ ██ "
-    ], "v" + Application.AppInfo.Version, 79);
+    ], "v" + Application.AppInfo.Label, 79);
 
     private static readonly LogoArt Narrow = new(75,
     [
@@ -20,7 +20,7 @@ internal static class Logo
         "██      █████   ██   ███ █████   ██ ██  ██ ██   ██ ███████ ██████    ████  ",
         "██      ██      ██    ██ ██      ██  ██ ██ ██   ██ ██   ██ ██   ██    ██   ",
         "███████ ███████  ██████  ███████ ██   ████ ██████  ██   ██ ██   ██    ██   "
-    ], "C #   ·   v" + Application.AppInfo.Version, -1);
+    ], "C #   ·   v" + Application.AppInfo.Label, -1);
 
     public static void Render(string subtitle) => ConsoleEx.WriteBlock(Lines(subtitle));
 
@@ -54,7 +54,7 @@ internal static class Logo
         Output.Indent +
         Theme.Emphasis("LEGENDARY", Theme.BrandStart) + " " +
         Theme.Emphasis("C#", Theme.CSharp) + "  " +
-        Theme.Paint("v" + Application.AppInfo.Version, Theme.Muted),
+        Theme.Paint("v" + Application.AppInfo.Label, Theme.Muted),
         Output.Indent + Theme.Paint(subtitle, Theme.Dim),
         Output.Indent + Credit()
     ];
