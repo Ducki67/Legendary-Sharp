@@ -305,7 +305,7 @@ internal sealed class DownloadManager : IDisposable
             return;
         }
 
-        if (request.RepairFiles is not null || !_session.Settings.OfferUefn) return;
+        if (request.RepairFiles is not null || request.Source.Manifest.IsUefn || !_session.Settings.OfferUefn) return;
         if (InstallRecord.TryLoad(job.Root)?.UefnInstalledUtc is not null) return;
 
         try

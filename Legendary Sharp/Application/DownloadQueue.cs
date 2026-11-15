@@ -195,9 +195,7 @@ internal sealed class QueueLease : IDisposable
             if (_disposed || now - _lastReport < ReportInterval) return;
             _lastReport = now;
 
-            _ticket.Fraction = progress.TotalDownloadBytes > 0
-                ? (double)progress.DownloadedBytes / progress.TotalDownloadBytes
-                : 0d;
+            _ticket.Fraction = progress.Fraction;
             _ticket.EtaSeconds = progress.Eta.TotalSeconds;
             Save();
         }

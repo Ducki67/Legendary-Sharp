@@ -26,7 +26,7 @@ internal static class UefnWorkflow
         {
             Output.Blank();
             Output.Warn($"No archived UEFN release matches {build.Manifest.ShortVersion}.");
-            Output.Hint("UEFN builds start at 24.01.");
+            Output.Hint($"UEFN releases start at 24.01, Epic hosts them in full from {UefnSurvey.FirstComplete}.");
             Output.Blank();
             return null;
         }
@@ -41,16 +41,27 @@ internal static class UefnWorkflow
         return await InstallAsync(session, build.Root, release, cancellation).ConfigureAwait(false);
     }
 
+    public static async Task<ResolvedManifest> ResolveAsync(Session session, UefnRelease release, CancellationToken cancellation) =>
+        await Spinner
+            .Run($"Reading the UEFN manifest for {release.Display}",
+                () => ManifestResolver.ResolveAsync(release.ManifestId, session.Http, session.Paths, null, cancellation))
+            .ConfigureAwait(false);
+
+    public static DownloadRequest RequestFor(ResolvedManifest resolved, string folder) => new()
+    {
+        Source = resolved,
+        InstallRoot = folder,
+        Tags = null,
+        IsAddon = InstallRecord.TryLoad(folder) is { BuildVersion.Length: > 0, IsUefn: false }
+    };
+
     public static async Task<DownloadJob?> InstallAsync(
         Session session,
         string installRoot,
         UefnRelease release,
         CancellationToken cancellation)
     {
-        var resolved = await Spinner
-            .Run($"Reading the UEFN manifest for {release.Display}",
-                () => ManifestResolver.ResolveAsync(release.ManifestId, session.Http, session.Paths, null, cancellation))
-            .ConfigureAwait(false);
+        var resolved = await ResolveAsync(session, release, cancellation).ConfigureAwait(false);
 
         var request = new DownloadRequest
         {

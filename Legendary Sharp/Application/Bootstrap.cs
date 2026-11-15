@@ -40,10 +40,13 @@ internal static class Bootstrap
         {
             using var session = Session.Create();
             ConsoleEx.ApplyPointer(session.Settings.Pointer);
+            Updater.CleanUp(session.Paths);
 
-            var code = await new InteractiveShell(session).RunAsync().ConfigureAwait(false);
+            var shell = new InteractiveShell(session);
+            var code = await shell.RunAsync().ConfigureAwait(false);
 
             ConsoleEx.LeaveAppScreen();
+            if (shell.Farewell is { } farewell) Output.Line(Theme.Paint(farewell, Theme.Cyan));
             Output.Line(Theme.Paint("Thanks for using " + AppInfo.Name + " v" + AppInfo.Version + ", made by " + AppInfo.Author + ".", Theme.Muted));
             Output.Line(Theme.Paint(AppInfo.Repository, Theme.Dim));
             return code;

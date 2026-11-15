@@ -7,13 +7,17 @@ namespace Legendary_Sharp.Application;
 internal sealed class InteractiveShell(Session session)
 {
     private const string VerifiedOnly = "confirmed";
+    private const string UefnOnly = "uefn";
 
     private readonly string? _here = LaunchFolder.Detect();
 
     private readonly Task<string?> _update = UpdateCheck.StartAsync(session);
 
+    public string? Farewell { get; private set; }
+
     private enum MainAction
     {
+        Update,
         Download,
         Downloads,
         Library,
@@ -52,6 +56,9 @@ internal sealed class InteractiveShell(Session session)
             {
                 switch (action)
                 {
+                    case MainAction.Update:
+                        if (await UpdateAsync(cancellation).ConfigureAwait(false)) return 0;
+                        break;
                     case MainAction.Download:
                         await DownloadAsync(cancellation).ConfigureAwait(false);
                         break;
@@ -108,6 +115,11 @@ internal sealed class InteractiveShell(Session session)
             new(MainAction.Quit, "Quit", string.Empty)
         };
 
+        if (_update is { IsCompletedSuccessfully: true, Result: { } latest } && Updater.CanUpdate)
+            choices.Insert(0, new(MainAction.Update, $"Update to v{latest}", Updater.IsInstalled
+                ? "runs the new installer, the app closes while it updates"
+                : "downloads the new exe and swaps it in"));
+
         return SelectionList<MainAction>.TryPick("What would you like to do?", choices, out action, banner: Banner)
                && action != MainAction.Quit;
     }
@@ -120,10 +132,100 @@ internal sealed class InteractiveShell(Session session)
             Output.Blank();
         }
 
-        var release = await PickReleaseAsync(cancellation).ConfigureAwait(false);
-        if (release is null) return;
+        var season = await PickSeasonAsync(cancellation).ConfigureAwait(false);
+        if (season is null) return;
+
+        if (season.Value.Key == UefnOnly)
+        {
+            await DownloadUefnAsync(cancellation).ConfigureAwait(false);
+            return;
+        }
+
+        var builds = season.Value.Builds
+            .Select(entry => new Choice<ReleaseEntry>(entry, entry.Version, Describe(entry)))
+            .ToList();
+
+        if (!SelectionList<ReleaseEntry>.TryPick("Which build?", builds, out var release)) return;
 
         await DownloadEntryAsync(release, cancellation).ConfigureAwait(false);
+    }
+
+    private async Task<bool> UpdateAsync(CancellationToken cancellation)
+    {
+        if (session.Downloads.Snapshot().Any(job => job.State is JobState.Running or JobState.Queued or JobState.Waiting))
+        {
+            Output.Warn("Downloads are still going. Updating closes the app, and they are offered back next time.");
+            if (Prompt.Ask("Update now anyway?", false) != true) return false;
+        }
+
+        var release = await Spinner
+            .Run("Checking the latest release", () => Updater.FindAsync(session, cancellation))
+            .ConfigureAwait(false);
+
+        if (release is null)
+        {
+            Output.Success($"You already have the latest version, v{AppInfo.Version}.");
+            ConsoleEx.PauseForKey("Press any key to go back.");
+            return false;
+        }
+
+        var file = await Spinner
+            .Run($"Downloading {release.FileName}", () => Updater.DownloadAsync(session, release, cancellation))
+            .ConfigureAwait(false);
+
+        Updater.Install(file);
+
+        Farewell = Updater.IsInstalled
+            ? $"The v{release.Version} installer is running. Open {AppInfo.Name} again once it finishes."
+            : $"Updated to v{release.Version}. Open {AppInfo.Name} again to use it.";
+        return true;
+    }
+
+    private async Task DownloadUefnAsync(CancellationToken cancellation)
+    {
+        var catalog = await Spinner
+            .Run("Loading the UEFN releases", () => session.UefnCatalogAsync(false, cancellation))
+            .ConfigureAwait(false);
+
+        if (catalog.Releases.Count == 0)
+        {
+            Output.Error("The UEFN release list is empty right now.");
+            ConsoleEx.PauseForKey("Press any key to go back.");
+            return;
+        }
+
+        var choices = catalog.Releases
+            .Select(release => new Choice<UefnRelease>(release, release.Name, release.Status))
+            .ToList();
+
+        if (!SelectionList<UefnRelease>.TryPick("Which UEFN release?", choices, out var chosen)) return;
+
+        var resolved = await UefnWorkflow.ResolveAsync(session, chosen, cancellation).ConfigureAwait(false);
+
+        var root = _here ?? session.Settings.EffectiveInstallRoot;
+        var suggestion = Path.Combine(root, Naming.SanitiseFolder(chosen.Name));
+        string? folder = suggestion;
+
+        if (_here is null)
+        {
+            Output.Blank();
+            Output.Hint("Pick the folder of a matching build to add UEFN to it instead.");
+            folder = Prompt.Path("Install folder", suggestion);
+        }
+
+        if (folder is null) return;
+
+        var request = UefnWorkflow.RequestFor(resolved, folder);
+        if (request.IsAddon)
+        {
+            Output.Blank();
+            Output.Info($"That folder holds {InstallRecord.TryLoad(folder)!.DisplayName}, UEFN goes into it.");
+        }
+
+        await new DownloadsScreen(session)
+            .ShowQueuedAsync(await DownloadWorkflow.QueueAsync(session, request, cancellation).ConfigureAwait(false),
+                cancellation)
+            .ConfigureAwait(false);
     }
 
     private async Task DownloadEntryAsync(ReleaseEntry release, CancellationToken cancellation)
@@ -179,7 +281,7 @@ internal sealed class InteractiveShell(Session session)
         if (running is { Progress: { } progress })
         {
             lines.Add(Output.Indent + Theme.Emphasis("▌", Theme.Accent) + " " +
-                      Theme.Paint("Downloading ", Theme.Dim) + Theme.Emphasis(running.Title, Theme.Cyan) + "  " +
+                      Theme.Paint(progress.IsWriting ? "Writing files " : "Downloading ", Theme.Dim) + Theme.Emphasis(running.Title, Theme.Cyan) + "  " +
                       Output.ProgressBar(progress.Fraction, bar) + "  " +
                       Theme.Emphasis(Format.Percent(progress.Fraction), Theme.Text) +
                       Theme.Paint($"  {Format.Duration(progress.Eta)} left", Theme.Muted));
@@ -254,7 +356,7 @@ internal sealed class InteractiveShell(Session session)
         return Prompt.Ask("Quit anyway?", false) == true;
     }
 
-    private async Task<ReleaseEntry?> PickReleaseAsync(CancellationToken cancellation)
+    private async Task<(string Key, IReadOnlyList<ReleaseEntry> Builds)?> PickSeasonAsync(CancellationToken cancellation)
     {
         var catalog = await Spinner
             .Run("Loading the release index", () => session.CatalogAsync(false, cancellation))
@@ -275,7 +377,8 @@ internal sealed class InteractiveShell(Session session)
         {
             new(VerifiedOnly, "Confirmed complete",
                 $"{Format.Count(confirmed.Count)} builds known to download in full"),
-            new(string.Empty, "All builds", $"{Format.Count(downloadable.Count)} with a manifest")
+            new(string.Empty, "All builds", $"{Format.Count(downloadable.Count)} with a manifest"),
+            new(UefnOnly, "UEFN only", $"the Unreal Editor for Fortnite on its own, complete from {UefnSurvey.FirstComplete}")
         };
 
         seasons.AddRange(catalog.Seasons
@@ -289,21 +392,15 @@ internal sealed class InteractiveShell(Session session)
 
         if (!SelectionList<string>.TryPick("Which season?", seasons, out var chosenSeason)) return null;
 
-        var pool = chosenSeason switch
+        IReadOnlyList<ReleaseEntry> pool = chosenSeason switch
         {
             VerifiedOnly => confirmed,
+            UefnOnly => [],
             "" => downloadable,
             _ => [.. downloadable.Where(entry => entry.Season == chosenSeason)]
         };
 
-        var builds = pool
-            .Select(entry => new Choice<ReleaseEntry>(
-                entry,
-                entry.Version,
-                Describe(entry)))
-            .ToList();
-
-        return SelectionList<ReleaseEntry>.TryPick("Which build?", builds, out var release) ? release : null;
+        return (chosenSeason, pool);
     }
 
     private static string SeasonNote(IReadOnlyList<ReleaseEntry> builds)

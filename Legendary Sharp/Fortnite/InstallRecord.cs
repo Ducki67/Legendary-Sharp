@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Legendary_Sharp.Application;
 using Legendary_Sharp.Downloader;
+using Legendary_Sharp.Downloader.Manifest;
 
 namespace Legendary_Sharp.Fortnite;
 
@@ -41,6 +42,11 @@ internal sealed class InstallRecord
     [JsonIgnore] public bool HasUnavailable => Unavailable.Count > 0;
 
     [JsonIgnore] public bool HasUefn => UefnInstalledUtc is not null;
+
+    [JsonIgnore] public bool IsUefn => BuildManifest.IsEditorApp(AppName);
+
+    [JsonIgnore] public string DisplayName =>
+        IsUefn ? $"UEFN {Naming.ShortenBuildVersion(BuildVersion)}" : Naming.ShortenBuildVersion(BuildVersion);
 
     [JsonIgnore] public bool IsComplete => CompletedUtc is not null;
 

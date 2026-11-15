@@ -70,8 +70,8 @@ internal sealed class DownloadJob(DownloadRequest request, string root, Download
     public string Title => Request.IsAddon
         ? $"UEFN {Request.Source.Manifest.ShortVersion}"
         : Request.RepairFiles is not null
-            ? $"{Request.Source.Manifest.ShortVersion} repair"
-            : Request.Source.Manifest.ShortVersion;
+            ? $"{Request.Source.Manifest.DisplayName} repair"
+            : Request.Source.Manifest.DisplayName;
 
     public JobState State
     {

@@ -4,7 +4,7 @@ internal sealed class CommandArgs
 {
     private static readonly HashSet<string> Switches = new(StringComparer.OrdinalIgnoreCase)
     {
-        "json", "confirmed", "all", "yes", "skip-missing", "help", "version"
+        "json", "confirmed", "all", "uefn", "yes", "skip-missing", "help", "version"
     };
 
     private static readonly HashSet<string> Values = new(StringComparer.OrdinalIgnoreCase)

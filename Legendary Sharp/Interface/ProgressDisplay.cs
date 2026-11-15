@@ -75,7 +75,7 @@ internal sealed class ProgressDisplay : IDisposable
     {
         var width = ConsoleEx.Width;
         var barWidth = Math.Clamp(width - 22, 20, 64);
-        var fraction = p.TotalDownloadBytes > 0 ? (double)p.DownloadedBytes / p.TotalDownloadBytes : 0d;
+        var fraction = p.Fraction;
 
         var lines = new List<string>
         {
@@ -127,7 +127,7 @@ internal sealed class ProgressDisplay : IDisposable
 
     private void WritePlain(in DownloadProgress p)
     {
-        var fraction = p.TotalDownloadBytes > 0 ? (double)p.DownloadedBytes / p.TotalDownloadBytes : 0d;
+        var fraction = p.Fraction;
         ConsoleEx.WriteLine(
             $"  {Format.Percent(fraction),6}  {Format.Bytes(p.DownloadedBytes)} / {Format.Bytes(p.TotalDownloadBytes)}" +
             $"  {Format.Rate(p.BytesPerSecond)}  files {p.FilesDone}/{p.FilesTotal}  eta {Format.Duration(p.Eta)}");

@@ -46,6 +46,29 @@ Broken, but missing 10 files or fewer on every preset.
 | 23.30-CL-23986860 | 8 to 18 |
 | 23.50-CL-24376996 | 2 to 3 |
 
+## UEFN
+
+Every UEFN release up to 24.40 downloaded on 2026-11-15, plus 27.10. The first one Epic still hosts in full is
+**UEFN 24.30-CL-25347382**. Older ones are missing files on the CDN, so they cannot be installed complete.
+
+| UEFN | Files missing |
+| --- | --- |
+| 24.01-CL-24757023 | 5,529 of 10,694 |
+| 24.10-CL-24903530 | 4,675 of 10,692 |
+| 24.20-CL-24939793 | 2,107 of 10,699 |
+| 24.20-CL-25019967 | 2,107 of 10,699 |
+| 24.20-CL-25058254 | 2,107 of 10,699 |
+| 24.20-CL-25156858 | 2,099 of 10,699 |
+| 24.30-CL-25210886 | 6 of 10,701 |
+| 24.30-CL-25347382 | ✓ |
+| 24.40-CL-25420516 | ✓ |
+| 24.40-CL-25521145 | ✓ |
+| 24.40-CL-25595478 | ✓ |
+| 27.10-CL-29552510 | ✓ |
+
+The release list names 24.10 as CL-24770548, but its manifest is CL-24903530. Legendary C# uses the
+manifest's changelist, so it pairs with the 24.10-CL-24903530 build.
+
 ## Every build (17 of 211 complete)
 
 Numbers are how many files that preset would be missing. ✓ means complete.
