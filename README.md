@@ -20,12 +20,14 @@ built for pulling old builds from Epic's CDN.
 - Arrow key menu with mouse scrolling and click to pick, no commands to learn
 - Install tag picker with real sizes, so a full build is one keypress
 - Tells you up front how much of an old build Epic still hosts
-- Adds UEFN to any build from 24.20, matched by changelist
+- UEFN on its own, or added to any build from 24.30, matched by changelist
 - Resumes after a crash or pause, even in the middle of a file, and verifies every chunk and file against the manifest
 - Cancel keeps what is downloaded, or deletes only the files that download created
 - Add or remove install tags on a build you already have
 - Picks up builds you got elsewhere
+- Writes several files at once, so builds and UEFN with thousands of small files finish fast
 - Queue as many downloads as you like, they run in the background and ease off when your PC is busy
+- Updates itself from the menu or with `L# update` (Windows only for now)
 
 
 ## Install
@@ -37,8 +39,9 @@ and run it. No admin rights needed. It installs for your account only and adds:
 - a **Legendary C#** entry in the Windows Terminal dropdown
 - Start menu and desktop shortcuts
 
-Running a newer msi updates it in place, and the menu tells you when one is out. Prefer no install?
-The plain `LegendarySharp-vX.Y.Z.exe` runs from anywhere.
+When a new version is out, the menu offers **Update**. It downloads the new installer, checks it against
+GitHub's checksum and runs it. Running a newer msi by hand updates it in place too. Prefer no install?
+The plain `LegendarySharp-vX.Y.Z.exe` runs from anywhere and updates itself the same way.
 
 ### Linux
 
@@ -50,6 +53,8 @@ the commands are the same as on Windows, only the paths are Linux ones: settings
 Every push to this branch is built on Ubuntu by GitHub, which downloads a real build and verifies every
 file, so a broken Linux build shows up straight away. The menu itself is only tested by people using it.
 
+Updating from inside the app is Windows only for now. On Linux, pull the branch and build it again.
+
 **Help test it.** If something does not work, open an issue and say it is Linux, with your distro, terminal
 and `log.txt`. Fixes are welcome as pull requests to the `Linux-beta` branch.
 
@@ -59,7 +64,7 @@ Run `L#` in a terminal or double click `LegendarySharp.exe`. Everything is in th
 
 | | |
 | --- | --- |
-| **Download a build** | Pick a season or jump straight to builds confirmed to download in full, choose how much of it you want, and go |
+| **Download a build** | Pick a season or jump straight to builds confirmed to download in full, choose how much of it you want, and go. **UEFN only** gets the editor on its own |
 | **My builds** | Verify, repair, resume an interrupted download, change install tags, uninstall, add UEFN and add builds found in your build folders |
 | **Downloads** | Everything queued, running or finished, with pause, resume, reorder and cancel |
 | **Browse releases** | Every known build, type to filter, open one to check availability, read its manifest or download it |
@@ -81,17 +86,20 @@ program can read, progress then goes to stderr.
 L# list --confirmed
 L# info 23.50-CL-24441668
 L# download 23.50-CL-24441668 --preset playable --folder D:\Builds\23.50
+L# download "UEFN 27.10"
 L# verify D:\Builds\23.50 --json
 ```
 
 | Command | Does |
 | --- | --- |
-| `list [text]` | Builds that can be downloaded, filtered by text, `--season`, `--confirmed` |
+| `list [text]` | Builds that can be downloaded, filtered by text, `--season`, `--confirmed`, or `--uefn` for UEFN releases |
 | `info <build>` | Sizes per preset and tag, and how much of it Epic still hosts |
 | `download <build>` | Downloads and waits, `--preset` or `--tags`, `--folder`, `--skip-missing` |
+| `download "UEFN <v>"` | UEFN on its own, or into a build when `--folder` points at one |
 | `builds` | Builds you have installed |
 | `verify <folder>` | Hashes every file |
 | `repair <folder>` | Verifies, then downloads anything broken |
+| `update` | Installs the newest release if there is one, Windows only |
 
 Exit codes are 0 done, 1 failed, 2 wrong usage, 3 finished with files missing or broken, and 130 when
 stopped with Ctrl+C. Stopping keeps what is downloaded, so running the same command again carries on.
@@ -126,9 +134,16 @@ afterwards which files could not be built.
 
 ## UEFN
 
-Builds from 24.20 have a matching UEFN release, paired by changelist, installed into the same folder.
+Builds from 24.01 have a matching UEFN release, paired by changelist, installed into the same folder.
+Epic still hosts them in full from 24.30-CL-25347382, older ones are missing files. See
+[docs/BUILDS.md](docs/BUILDS.md#uefn).
 You are offered it after a download, or add it later from **My builds**. Turn the prompt off in
 **Settings**.
+
+UEFN also downloads on its own, with no game files: pick **UEFN only** under **Download a build**, or run
+`L# download "UEFN 27.10"`. It gets its own folder like `UEFN 27.10-CL-29552510` and shows up in
+**My builds**. Playtesting from the editor still needs the matching build, so point the folder at that
+build if you want both together.
 
 ## Downloads
 

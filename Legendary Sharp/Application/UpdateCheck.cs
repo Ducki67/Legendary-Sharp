@@ -43,7 +43,7 @@ internal static class UpdateCheck
         }
     }
 
-    private static bool IsNewer(string latest) =>
+    public static bool IsNewer(string latest) =>
         Version.TryParse(latest, out var remote) &&
         Version.TryParse(AppInfo.Version, out var local) &&
         remote > local;

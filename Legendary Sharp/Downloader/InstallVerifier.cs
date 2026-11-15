@@ -5,53 +5,82 @@ namespace Legendary_Sharp.Downloader;
 
 internal static class InstallVerifier
 {
+    private const int Readers = 4;
+
     public static async Task<VerifyReport> VerifyAsync(
         IReadOnlyList<FileEntry> files,
         string installRoot,
         Action<VerifyProgress> onProgress,
         CancellationToken cancellation)
     {
-        var missing = new List<FileEntry>();
-        var damaged = new List<FileEntry>();
-        var healthy = 0;
-        long verifiedBytes = 0;
+        var states = new FileState[files.Count];
         var total = files.Sum(file => file.Size);
         var started = DateTime.UtcNow;
-        var buffer = new byte[1 << 20];
+        var gate = new Lock();
+        var done = 0;
+        long verifiedBytes = 0;
+        var next = -1;
+
+        async Task ReadAsync()
+        {
+            var buffer = new byte[1 << 20];
+            int index;
+
+            while ((index = Interlocked.Increment(ref next)) < files.Count)
+            {
+                cancellation.ThrowIfCancellationRequested();
+
+                var file = files[index];
+                var (state, bytes) = await CheckAsync(file, installRoot, buffer, cancellation).ConfigureAwait(false);
+                states[index] = state;
+
+                lock (gate)
+                {
+                    done++;
+                    verifiedBytes += bytes;
+                    onProgress(new VerifyProgress(done, files.Count, verifiedBytes, total,
+                        DateTime.UtcNow - started, file.FileName));
+                }
+            }
+        }
+
+        await Task.WhenAll(Enumerable.Range(0, Math.Min(Readers, Math.Max(1, files.Count)))
+            .Select(_ => Task.Run(ReadAsync, cancellation))).ConfigureAwait(false);
+
+        var missing = new List<FileEntry>();
+        var damaged = new List<FileEntry>();
 
         for (var index = 0; index < files.Count; index++)
         {
-            cancellation.ThrowIfCancellationRequested();
-
-            var file = files[index];
-            var path = Path.Combine(installRoot, file.ToNativePath());
-            var info = new FileInfo(path);
-
-            if (!info.Exists)
-            {
-                missing.Add(file);
-            }
-            else if (info.Length != file.Size)
-            {
-                damaged.Add(file);
-                verifiedBytes += info.Length;
-            }
-            else if (await MatchesAsync(path, file.ShaHash, buffer, cancellation).ConfigureAwait(false))
-            {
-                healthy++;
-                verifiedBytes += file.Size;
-            }
-            else
-            {
-                damaged.Add(file);
-                verifiedBytes += file.Size;
-            }
-
-            onProgress(new VerifyProgress(index + 1, files.Count, verifiedBytes, total,
-                DateTime.UtcNow - started, file.FileName));
+            if (states[index] == FileState.Missing) missing.Add(files[index]);
+            else if (states[index] == FileState.Damaged) damaged.Add(files[index]);
         }
 
-        return new VerifyReport(healthy, missing, damaged);
+        return new VerifyReport(files.Count - missing.Count - damaged.Count, missing, damaged);
+    }
+
+    private static async Task<(FileState State, long Bytes)> CheckAsync(
+        FileEntry file,
+        string installRoot,
+        byte[] buffer,
+        CancellationToken cancellation)
+    {
+        var path = Path.Combine(installRoot, file.ToNativePath());
+        var info = new FileInfo(path);
+
+        if (!info.Exists) return (FileState.Missing, 0);
+        if (info.Length != file.Size) return (FileState.Damaged, info.Length);
+
+        return await MatchesAsync(path, file.ShaHash, buffer, cancellation).ConfigureAwait(false)
+            ? (FileState.Healthy, file.Size)
+            : (FileState.Damaged, file.Size);
+    }
+
+    private enum FileState
+    {
+        Healthy,
+        Missing,
+        Damaged
     }
 
     private static async Task<bool> MatchesAsync(

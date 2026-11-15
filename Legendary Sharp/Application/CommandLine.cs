@@ -54,6 +54,7 @@ internal static class CommandLine
                 "builds" => Builds(session, parsed),
                 "verify" => await VerifyAsync(session, parsed, cancellation).ConfigureAwait(false),
                 "repair" => await RepairAsync(session, parsed, cancellation).ConfigureAwait(false),
+                "update" => await UpdateAsync(session, parsed, cancellation).ConfigureAwait(false),
                 _ => throw new CommandException($"Unknown command \"{parsed.Command}\".")
             };
         }
@@ -100,14 +101,17 @@ internal static class CommandLine
         Output.Pair("list [text]", "builds that can be downloaded, filtered by text", 24);
         Output.Pair("info <build>", "sizes, presets and how much Epic still hosts", 24);
         Output.Pair("download <build>", "download a build and wait until it finishes", 24);
+        Output.Pair("download \"UEFN <v>\"", "UEFN on its own, or into a build with --folder", 24);
         Output.Pair("builds", "builds you have installed", 24);
         Output.Pair("verify <folder>", "hash every file of an installed build", 24);
         Output.Pair("repair <folder>", "verify, then download anything broken", 24);
+        Output.Pair("update", "install the newest release if there is one", 24);
         Output.Section("Options");
         Output.Pair("--json", "print the result as JSON, progress goes to stderr", 24);
         Output.Pair("--season <n>", "list: only that season", 24);
         Output.Pair("--confirmed", "list: only builds that download in full", 24);
         Output.Pair("--all", "list: include Android, iOS and Mac builds", 24);
+        Output.Pair("--uefn", "list: UEFN releases instead of builds", 24);
         Output.Pair("--preset <key>", $"download: {string.Join(", ", TagPresets.All.Select(preset => preset.Key))}", 24);
         Output.Pair("--tags <a,b>", "download: exact install tags instead of a preset", 24);
         Output.Pair("--folder <path>", "download: where to put it, defaults to your install root", 24);
@@ -116,6 +120,7 @@ internal static class CommandLine
         Output.Section("Examples");
         Output.Line($"{c} list --confirmed");
         Output.Line($"{c} download 23.50-CL-24441668 --preset playable --folder D:\\Builds\\23.50");
+        Output.Line($"{c} download \"UEFN 27.10\"");
         Output.Line($"{c} verify D:\\Builds\\23.50 --json");
         Output.Section("Exit codes");
         Output.Line("0 done, 1 failed, 2 wrong usage, 3 finished with files missing or broken, 130 stopped with Ctrl+C");
@@ -124,6 +129,8 @@ internal static class CommandLine
 
     private static async Task<int> ListAsync(Session session, CommandArgs args, CancellationToken cancellation)
     {
+        if (args.Has("uefn")) return await ListUefnAsync(session, args, cancellation).ConfigureAwait(false);
+
         var catalog = await session.CatalogAsync(false, cancellation).ConfigureAwait(false);
         var season = args.Value("season");
 
@@ -156,14 +163,79 @@ internal static class CommandLine
         return Success;
     }
 
+    private static async Task<int> UpdateAsync(Session session, CommandArgs args, CancellationToken cancellation)
+    {
+        if (!Updater.CanUpdate)
+            throw new CommandException($"This copy can't update itself. Get the new version from {AppInfo.Repository}/releases.", Failure);
+
+        var release = await Updater.FindAsync(session, cancellation).ConfigureAwait(false);
+
+        if (release is null)
+        {
+            if (args.Json) WriteJson(writer => { writer.WriteBoolean("updated", false); writer.WriteString("version", AppInfo.Version); });
+            else Output.Success($"You already have the latest version, v{AppInfo.Version}.");
+            return Success;
+        }
+
+        Output.Info($"Downloading {release.FileName}");
+        var file = await Updater.DownloadAsync(session, release, cancellation).ConfigureAwait(false);
+        Updater.Install(file);
+
+        if (args.Json)
+            WriteJson(writer =>
+            {
+                writer.WriteBoolean("updated", true);
+                writer.WriteString("version", release.Version);
+                writer.WriteBoolean("installer", Updater.IsInstalled);
+            });
+        else
+            Output.Success(Updater.IsInstalled
+                ? $"The v{release.Version} installer is running, it finishes on its own."
+                : $"Updated to v{release.Version}.");
+
+        return Success;
+    }
+
+    private static async Task<int> ListUefnAsync(Session session, CommandArgs args, CancellationToken cancellation)
+    {
+        var catalog = await session.UefnCatalogAsync(false, cancellation).ConfigureAwait(false);
+        var releases = catalog.Search(args.Argument);
+
+        if (args.Json)
+        {
+            WriteJsonArray(releases, (writer, release) =>
+            {
+                writer.WriteString("version", release.Name);
+                writer.WriteString("changelist", release.Changelist);
+                writer.WriteString("manifestId", release.ManifestId);
+                if (release.MissingFiles is { } missing) writer.WriteNumber("missingFiles", missing);
+            });
+            return Success;
+        }
+
+        if (releases.Count == 0)
+        {
+            Output.Info("No UEFN releases match.");
+            return Success;
+        }
+
+        var width = releases.Max(release => release.Name.Length);
+        foreach (var release in releases)
+            Output.Line($"{release.Name.PadRight(width)}   {(release.MissingFiles is null ? string.Empty : release.Status)}");
+
+        Output.Blank();
+        Output.Hint($"{Format.Count(releases.Count)} UEFN releases. {AppInfo.Command} download \"UEFN <version>\" gets one.");
+        return Success;
+    }
+
     private static async Task<int> InfoAsync(Session session, CommandArgs args, CancellationToken cancellation)
     {
         var resolved = await ResolveAsync(session, args, "info", cancellation).ConfigureAwait(false);
         var manifest = resolved.Manifest;
-        var version = resolved.Release?.Version ?? manifest.ShortVersion;
-        var groups = InstallTagCatalog.Summarise(manifest);
+        var version = Label(resolved);
+        var groups = manifest.IsUefn ? [] : InstallTagCatalog.Summarise(manifest);
 
-        var presets = TagPresets.All
+        var presets = manifest.IsUefn ? [] : TagPresets.All
             .Select(preset => (Preset: preset, Size: InstallTagCatalog.SizeOf(manifest,
                 TagPresets.Intersect(preset.Resolve(groups), manifest)), Missing: VerifiedBuilds.MissingFor(version, preset.Key)))
             .ToList();
@@ -175,6 +247,7 @@ internal static class CommandLine
                 writer.WriteString("version", version);
                 writer.WriteString("buildVersion", manifest.BuildVersion);
                 writer.WriteString("manifestId", resolved.ManifestId);
+                writer.WriteBoolean("uefn", manifest.IsUefn);
                 writer.WriteBoolean("confirmed", VerifiedBuilds.IsVerified(version));
                 writer.WriteNumber("files", manifest.Files.Count);
                 writer.WriteNumber("chunks", manifest.Chunks.Count);
@@ -218,7 +291,7 @@ internal static class CommandLine
             ? "confirmed, downloads in full"
             : VerifiedBuilds.MissingNote(version) ?? "not checked yet");
 
-        Output.Section("Presets");
+        if (presets.Count > 0) Output.Section("Presets");
         foreach (var (preset, size, missing) in presets)
             Output.Pair(preset.Key, $"{Format.Bytes(size),10}   {preset.Name}" +
                                     (missing is > 0 ? $", {Format.Files(missing.Value)} missing" : string.Empty), 14);
@@ -238,29 +311,36 @@ internal static class CommandLine
     {
         var resolved = await ResolveAsync(session, args, "download", cancellation).ConfigureAwait(false);
         var manifest = resolved.Manifest;
-        var version = resolved.Release?.Version ?? manifest.ShortVersion;
-        var tags = PickTags(session, args, manifest, version);
+        var version = Label(resolved);
+        var tags = manifest.IsUefn ? null : PickTags(session, args, manifest, version);
 
         var folder = Path.GetFullPath(args.Value("folder") ?? Path.Combine(session.Settings.EffectiveInstallRoot,
-            Naming.SanitiseFolder(resolved.Release?.SuggestedFolderName is { Length: > 0 } name ? name : manifest.ShortVersion)));
+            Naming.SanitiseFolder(resolved.Release?.SuggestedFolderName is { Length: > 0 } name ? name : version)));
 
         if (session.Downloads.Holds(folder) || DownloadQueue.Busy(session.Paths, folder) is not null)
             throw new CommandException("Another window is downloading into that folder right now.", Failure);
 
-        if (InstallRecord.TryLoad(folder) is { BuildVersion.Length: > 0 } existing &&
-            !existing.BuildVersion.Equals(manifest.BuildVersion, StringComparison.Ordinal) && !args.Has("yes"))
+        var request = manifest.IsUefn
+            ? UefnWorkflow.RequestFor(resolved, folder) with { AssumeYes = true, SkipMissing = args.Has("skip-missing") }
+            : new DownloadRequest
+            {
+                Source = resolved,
+                InstallRoot = folder,
+                Tags = tags,
+                AssumeYes = true,
+                SkipMissing = args.Has("skip-missing")
+            };
+
+        var existing = InstallRecord.TryLoad(folder);
+
+        if (existing is { BuildVersion.Length: > 0 } && !args.Has("yes") && (request.IsAddon
+                ? !SameVersion(existing.BuildVersion, manifest.BuildVersion)
+                : !SameVersion(existing.BuildVersion, manifest.BuildVersion) || existing.IsUefn != manifest.IsUefn))
             throw new CommandException(
-                $"{folder} already holds {Naming.ShortenBuildVersion(existing.BuildVersion)}. " +
+                $"{folder} already holds {existing.DisplayName}. " +
                 "Pick another --folder, or add --yes to download into it anyway.", Failure);
 
-        var request = new DownloadRequest
-        {
-            Source = resolved,
-            InstallRoot = folder,
-            Tags = tags,
-            AssumeYes = true,
-            SkipMissing = args.Has("skip-missing")
-        };
+        if (request.IsAddon) version = $"UEFN {manifest.ShortVersion} into {existing!.DisplayName}";
 
         var job = DownloadWorkflow.CreateQuietly(session, request);
 
@@ -295,7 +375,8 @@ internal static class CommandLine
         {
             WriteJsonArray(builds, (writer, build) =>
             {
-                writer.WriteString("version", Naming.ShortenBuildVersion(build.Record.BuildVersion));
+                writer.WriteString("version", build.Record.DisplayName);
+                writer.WriteString("kind", build.Record.IsUefn ? "uefn" : "build");
                 writer.WriteString("buildVersion", build.Record.BuildVersion);
                 writer.WriteString("folder", build.Path);
                 writer.WriteNumber("size", build.Record.InstallSize);
@@ -313,7 +394,7 @@ internal static class CommandLine
             return Success;
         }
 
-        var versions = builds.Select(build => Naming.ShortenBuildVersion(build.Record.BuildVersion)).ToList();
+        var versions = builds.Select(build => build.Record.DisplayName).ToList();
         var width = versions.Max(version => version.Length);
 
         for (var index = 0; index < builds.Count; index++)
@@ -377,6 +458,9 @@ internal static class CommandLine
         var reference = args.Argument ??
                         throw new CommandException($"Which build? For example: {AppInfo.Command} {command} 23.50-CL-24441668");
 
+        if (UefnCatalog.IsUefnReference(reference))
+            return await ResolveUefnAsync(session, reference, cancellation).ConfigureAwait(false);
+
         var catalog = await session.CatalogAsync(false, cancellation).ConfigureAwait(false);
 
         if (!File.Exists(reference) && catalog.Find(reference) is null)
@@ -392,6 +476,31 @@ internal static class CommandLine
         return await ManifestResolver.ResolveAsync(reference, session.Http, session.Paths, catalog, cancellation)
             .ConfigureAwait(false);
     }
+
+    private static async Task<ResolvedManifest> ResolveUefnAsync(Session session, string reference, CancellationToken cancellation)
+    {
+        var catalog = await session.UefnCatalogAsync(false, cancellation).ConfigureAwait(false);
+        var matches = catalog.Find(reference);
+
+        if (matches.Count == 0)
+            throw new CommandException(
+                $"No UEFN release matches \"{reference}\". {AppInfo.Command} list --uefn shows them all.", Failure);
+
+        if (matches.Count > 1)
+            throw new CommandException(
+                $"\"{reference}\" matches {matches.Count} UEFN releases: " +
+                $"{string.Join(", ", matches.Take(6).Select(release => release.Name))}" +
+                $"{(matches.Count > 6 ? ", ..." : string.Empty)}. Use the full version.", Failure);
+
+        return await ManifestResolver.ResolveAsync(matches[0].ManifestId, session.Http, session.Paths, null, cancellation)
+            .ConfigureAwait(false);
+    }
+
+    private static string Label(ResolvedManifest resolved) =>
+        resolved.Manifest.IsUefn ? resolved.Manifest.DisplayName : resolved.Release?.Version ?? resolved.Manifest.ShortVersion;
+
+    private static bool SameVersion(string buildVersion, string other) =>
+        Naming.ShortenBuildVersion(buildVersion).Equals(Naming.ShortenBuildVersion(other), StringComparison.OrdinalIgnoreCase);
 
     private static async Task<OpenedBuild> OpenAsync(Session session, CommandArgs args, string command, CancellationToken cancellation)
     {
@@ -409,7 +518,7 @@ internal static class CommandLine
         var files = InstalledBuildLoader.SelectedFiles(build);
         var last = DateTime.UtcNow;
 
-        Output.Info($"Verifying {Naming.ShortenBuildVersion(build.Record.BuildVersion)}, {Format.Files(files.Count)}");
+        Output.Info($"Verifying {build.Record.DisplayName}, {Format.Files(files.Count)}");
 
         var report = await InstallVerifier.VerifyAsync(files, build.Root, progress =>
         {
@@ -510,6 +619,10 @@ internal static class CommandLine
     {
         if (view.Blocker is { } blocker) return $"waiting for another window to finish {blocker.Build}";
         if (view.Progress is not { } progress) return "starting";
+
+        if (progress.IsWriting)
+            return $"{Format.Percent(view.Fraction),6}   writing files {Format.Count(progress.FilesDone)} of " +
+                   $"{Format.Count(progress.FilesTotal)}   {Format.Duration(progress.Eta)} left";
 
         return $"{Format.Percent(view.Fraction),6}   {Format.Bytes(progress.DownloadedBytes)} of " +
                $"{Format.Bytes(progress.TotalDownloadBytes)}   {Format.Rate(progress.BytesPerSecond)}   " +

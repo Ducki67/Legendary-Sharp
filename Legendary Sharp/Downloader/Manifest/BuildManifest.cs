@@ -3,6 +3,7 @@ namespace Legendary_Sharp.Downloader.Manifest;
 internal sealed class BuildManifest
 {
     private const string ContentApp = "FortniteContentBuilds";
+    private const string EditorSuffix = "_Studio";
 
     private readonly Dictionary<ChunkGuid, ChunkInfo> _chunkLookup;
     private readonly Lazy<string[]> _installTags;
@@ -51,6 +52,10 @@ internal sealed class BuildManifest
 
     public bool IsContentBuild => AppName.Equals(ContentApp, StringComparison.OrdinalIgnoreCase);
 
+    public bool IsUefn => IsEditorApp(AppName);
+
+    public static bool IsEditorApp(string appName) => appName.EndsWith(EditorSuffix, StringComparison.OrdinalIgnoreCase);
+
     public string BuildVersion { get; }
 
     public string LaunchExe { get; }
@@ -76,6 +81,8 @@ internal sealed class BuildManifest
     public long DownloadSize => Chunks.Sum(chunk => chunk.CompressedSize);
 
     public string ShortVersion => Naming.ShortenBuildVersion(BuildVersion);
+
+    public string DisplayName => IsUefn ? $"UEFN {ShortVersion}" : ShortVersion;
 
     public ChunkInfo Chunk(ChunkGuid guid) =>
         _chunkLookup.TryGetValue(guid, out var chunk)

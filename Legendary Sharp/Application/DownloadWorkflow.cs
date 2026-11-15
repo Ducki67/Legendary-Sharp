@@ -160,15 +160,28 @@ internal static class DownloadWorkflow
 
     private static bool ConfirmFolder(DownloadRequest request, BuildManifest manifest, string root)
     {
-        if (request.IsAddon || request.RepairFiles is not null) return true;
+        if (request.RepairFiles is not null) return true;
 
         var existing = InstallRecord.TryLoad(root);
+
+        if (request.IsAddon)
+        {
+            if (existing is null || existing.BuildVersion.Equals(manifest.BuildVersion, StringComparison.Ordinal)) return true;
+
+            Output.Blank();
+            Output.Warn($"{manifest.DisplayName} is not the UEFN for {existing.DisplayName}.");
+            Output.Detail("The editor only playtests against the build with the same changelist.");
+            Output.Blank();
+            return Prompt.Ask("Install it into this folder anyway?", false) == true;
+        }
+
         if (existing is null || existing.BuildVersion.Length == 0) return true;
-        if (existing.BuildVersion.Equals(manifest.BuildVersion, StringComparison.Ordinal)) return true;
+        if (existing.BuildVersion.Equals(manifest.BuildVersion, StringComparison.Ordinal) &&
+            existing.IsUefn == manifest.IsUefn) return true;
 
         Output.Blank();
-        Output.Warn($"This folder already holds {Naming.ShortenBuildVersion(existing.BuildVersion)}.");
-        Output.Detail($"Downloading {manifest.ShortVersion} into it overwrites shared files and leaves a mix of both.");
+        Output.Warn($"This folder already holds {existing.DisplayName}.");
+        Output.Detail($"Downloading {manifest.DisplayName} into it overwrites shared files and leaves a mix of both.");
         Output.Blank();
         return Prompt.Ask("Download into this folder anyway?", false) == true;
     }

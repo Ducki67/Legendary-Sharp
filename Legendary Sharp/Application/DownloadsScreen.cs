@@ -278,6 +278,8 @@ internal sealed class DownloadsScreen(Session session)
                                           $"   at {Format.Rate(p.BytesPerSecond)}", Theme.Text));
             lines.Add(Field("Files", $"{Format.Count(p.FilesDone)} of {Format.Count(p.FilesTotal)}" +
                                      $"   disk {Format.Rate(p.WriteBytesPerSecond)}", Theme.Text));
+            if (p.IsWriting)
+                lines.Add(Field("Status", "everything is downloaded, writing the last files to disk", Theme.Muted));
             lines.Add(Field("Workers", $"{p.ActiveWorkers} busy, {p.WorkerLimit} allowed{easing}",
                 p.Easing.Length > 0 ? Theme.Warning : Theme.Text));
         }
@@ -340,7 +342,7 @@ internal sealed class DownloadsScreen(Session session)
 
     private static string Describe(JobView job) => job.State switch
     {
-        JobState.Running => $"downloading  {Format.Percent(job.Fraction)}",
+        JobState.Running => $"{job.Progress?.Activity ?? "downloading"}  {Format.Percent(job.Fraction)}",
         JobState.Waiting => "waiting for another window",
         JobState.Queued => $"queued  {Format.Bytes(job.DownloadSize)}",
         JobState.Paused => job.Progress is null ? "paused" : $"paused at {Format.Percent(job.Fraction)}",

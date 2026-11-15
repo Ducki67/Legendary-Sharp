@@ -49,7 +49,7 @@ internal sealed class LibraryScreen(Session session)
         var rows = builds
             .Select(build => new Choice<LibraryRow>(
                 new LibraryRow(build, null, null),
-                Naming.ShortenBuildVersion(build.Record.BuildVersion),
+                build.Record.DisplayName,
                 $"{Format.Bytes(build.Record.InstallSize)}  {Status(build, queue, mine)}" +
                 $"{(build.Record.Adopted ? "  added from existing files" : string.Empty)}  {build.Path}"))
             .ToList();
@@ -114,7 +114,10 @@ internal sealed class LibraryScreen(Session session)
         if (downloadable)
             actions.Insert(2, new(BuildAction.Resume, "Resume download", "continue an interrupted download"));
 
-        if (!SelectionList<BuildAction>.TryPick(Naming.ShortenBuildVersion(chosen.Record.BuildVersion), actions,
+        if (chosen.Record.IsUefn)
+            actions.RemoveAll(choice => choice.Value is BuildAction.Uefn or BuildAction.Tags);
+
+        if (!SelectionList<BuildAction>.TryPick(chosen.Record.DisplayName, actions,
                 out var action)) return;
 
         switch (action)
@@ -199,7 +202,7 @@ internal sealed class LibraryScreen(Session session)
         new DownloadsScreen(session).ShowQueuedAsync(job, cancellation);
 
     private Task<OpenedBuild> OpenBuildAsync(InstalledBuild chosen, CancellationToken cancellation) =>
-        Spinner.Run($"Opening {Naming.ShortenBuildVersion(chosen.Record.BuildVersion)}",
+        Spinner.Run($"Opening {chosen.Record.DisplayName}",
             () => InstalledBuildLoader.OpenAsync(session, chosen.Path, cancellation));
 
     private async Task<OpenedBuild?> TryOpenBuildAsync(InstalledBuild chosen, CancellationToken cancellation)

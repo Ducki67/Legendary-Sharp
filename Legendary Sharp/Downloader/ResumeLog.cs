@@ -10,6 +10,7 @@ internal sealed class ResumeLog : IDisposable
     private readonly string _path;
     private StreamWriter? _writer;
     private StreamWriter? _created;
+    private readonly Lock _gate = new();
 
     private ResumeLog(string path) => _path = path;
 
@@ -42,7 +43,10 @@ internal sealed class ResumeLog : IDisposable
         return new ResumeScan(completed, missing, changed);
     }
 
-    public void MarkComplete(FileEntry file) => Writer().WriteLine($"{Convert.ToHexString(file.ShaHash)}:{file.FileName}");
+    public void MarkComplete(FileEntry file)
+    {
+        lock (_gate) Writer().WriteLine($"{Convert.ToHexString(file.ShaHash)}:{file.FileName}");
+    }
 
     public void MarkComplete(IEnumerable<FileEntry> files)
     {
@@ -94,7 +98,10 @@ internal sealed class ResumeLog : IDisposable
         }
     }
 
-    public void MarkCreated(FileEntry file) => CreatedWriter().WriteLine(file.FileName);
+    public void MarkCreated(FileEntry file)
+    {
+        lock (_gate) CreatedWriter().WriteLine(file.FileName);
+    }
 
     public IReadOnlyList<FileEntry> CreatedFiles(BuildManifest manifest)
     {

@@ -7,6 +7,30 @@ namespace Legendary_Sharp.Fortnite;
 internal sealed record UefnRelease(string Version, string Changelist, string ManifestId)
 {
     public string Display => $"UEFN {Version} CL-{Changelist}";
+
+    public string Name => $"UEFN {Version}-CL-{Changelist}";
+
+    public int? MissingFiles => UefnSurvey.MissingFiles(Changelist);
+
+    public string Status => MissingFiles switch
+    {
+        0 => "✓ downloads in full",
+        { } missing => $"{missing:N0} files no longer hosted",
+        null => "the editor on its own, no game files"
+    };
+
+    public bool Matches(string reference)
+    {
+        var text = reference.Trim();
+        if (text.StartsWith("UEFN", StringComparison.OrdinalIgnoreCase)) text = text[4..].Trim();
+        if (text.StartsWith("CL-", StringComparison.OrdinalIgnoreCase)) text = text[3..];
+
+        return text.Equals(Version, StringComparison.OrdinalIgnoreCase) ||
+               (!text.Contains('.') && Version.StartsWith(text + ".", StringComparison.Ordinal)) ||
+               text.Equals(Changelist, StringComparison.Ordinal) ||
+               text.Equals($"{Version}-CL-{Changelist}", StringComparison.OrdinalIgnoreCase) ||
+               text.Equals($"{Version} CL-{Changelist}", StringComparison.OrdinalIgnoreCase);
+    }
 }
 
 internal sealed class UefnCatalog(IReadOnlyList<UefnRelease> releases)
@@ -69,6 +93,7 @@ internal sealed class UefnCatalog(IReadOnlyList<UefnRelease> releases)
             if (changelist.Length == 0) continue;
 
             var version = build[4..marker].Trim();
+            changelist = UefnSurvey.CorrectChangelist(manifest, changelist);
             releases.Add(new UefnRelease(version, changelist, manifest));
         }
 
@@ -79,6 +104,17 @@ internal sealed class UefnCatalog(IReadOnlyList<UefnRelease> releases)
         string.IsNullOrEmpty(changelist)
             ? null
             : Releases.FirstOrDefault(release => release.Changelist == changelist);
+
+    public static bool IsUefnReference(string reference) =>
+        reference.TrimStart().StartsWith("UEFN", StringComparison.OrdinalIgnoreCase);
+
+    public IReadOnlyList<UefnRelease> Find(string reference) =>
+        [.. Releases.Where(release => release.Matches(reference))];
+
+    public IReadOnlyList<UefnRelease> Search(string? text) =>
+        string.IsNullOrWhiteSpace(text)
+            ? Releases
+            : [.. Releases.Where(release => release.Name.Contains(text.Trim(), StringComparison.OrdinalIgnoreCase))];
 
     public UefnRelease? MatchBuild(string buildVersion)
     {

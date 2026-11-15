@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using System.Threading.Channels;
 using Legendary_Sharp.Downloader.Manifest;
 
@@ -6,11 +7,14 @@ namespace Legendary_Sharp.Downloader;
 internal sealed class DownloadEngine(DownloadOptions options)
 {
     private const long CheckpointBytes = 128L << 20;
+    private const int Writers = 8;
 
     private readonly RateMeter _networkRate = new(TimeSpan.FromSeconds(6));
     private readonly RateMeter _diskRate = new(TimeSpan.FromSeconds(6));
+    private readonly RateMeter _workRate = new(TimeSpan.FromSeconds(10));
     private readonly HashSet<string> _createdDirectories = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<FailedFile> _failures = [];
+    private readonly Lock _gate = new();
 
     private long _writtenBytes;
     private int _filesDone;
@@ -161,28 +165,114 @@ internal sealed class DownloadEngine(DownloadOptions options)
 
     private async Task WriteAsync(DownloadPlan plan, ChunkCache cache, ResumeLog resume, CancellationToken cancellation)
     {
-        foreach (var file in plan.Files)
-        {
-            cancellation.ThrowIfCancellationRequested();
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        var turns = LargeFileTurns(plan);
+        var next = -1;
 
-            var target = Path.Combine(options.InstallRoot, file.ToNativePath());
-            EnsureDirectory(Path.GetDirectoryName(target));
-            ClearReadOnly(target);
-
-            var failure = await WriteFileAsync(file, target, plan, cache, resume, cancellation).ConfigureAwait(false);
-
-            if (failure is not null)
+        var writers = Enumerable.Range(0, Math.Min(Writers, Math.Max(1, plan.Files.Count)))
+            .Select(_ => Task.Run(async () =>
             {
-                _failures.Add(new FailedFile(file.FileName, failure.Message, failure is ChunkMissingException));
-                Delete(target);
-                continue;
+                try
+                {
+                    int index;
+                    while ((index = Interlocked.Increment(ref next)) < plan.Files.Count)
+                        await WriteInTurnAsync(index, turns, plan, cache, resume, stop.Token).ConfigureAwait(false);
+                }
+                catch
+                {
+                    await stop.CancelAsync().ConfigureAwait(false);
+                    throw;
+                }
+            }, CancellationToken.None))
+            .ToArray();
+
+        try
+        {
+            await Task.WhenAll(writers).ConfigureAwait(false);
+        }
+        catch
+        {
+            var cause = writers
+                .Select(writer => writer.Exception?.InnerException)
+                .FirstOrDefault(error => error is not null and not OperationCanceledException);
+
+            if (cause is not null && !cancellation.IsCancellationRequested) ExceptionDispatchInfo.Throw(cause);
+            throw;
+        }
+    }
+
+    private static TaskCompletionSource?[] LargeFileTurns(DownloadPlan plan)
+    {
+        var turns = new TaskCompletionSource?[plan.Files.Count];
+
+        for (var index = 0; index < plan.Files.Count; index++)
+            if (IsLarge(plan.Files[index], plan))
+                turns[index] = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        return turns;
+    }
+
+    private static bool IsLarge(FileEntry file, DownloadPlan plan) =>
+        file.Size > CheckpointBytes || plan.Partial?.FileName == file.FileName;
+
+    private async Task WriteInTurnAsync(
+        int index,
+        TaskCompletionSource?[] turns,
+        DownloadPlan plan,
+        ChunkCache cache,
+        ResumeLog resume,
+        CancellationToken cancellation)
+    {
+        var turn = turns[index];
+        if (turn is null)
+        {
+            await WriteEntryAsync(plan.Files[index], plan, cache, resume, cancellation).ConfigureAwait(false);
+            return;
+        }
+
+        try
+        {
+            for (var earlier = index - 1; earlier >= 0; earlier--)
+            {
+                if (turns[earlier] is not { } previous) continue;
+                await previous.Task.WaitAsync(cancellation).ConfigureAwait(false);
+                break;
             }
 
-            ApplyAttributes(target, file);
-            resume.MarkComplete(file);
-            if (file.Size > CheckpointBytes || plan.Partial?.FileName == file.FileName) resume.ClearPartial();
-            Interlocked.Increment(ref _filesDone);
+            await WriteEntryAsync(plan.Files[index], plan, cache, resume, cancellation).ConfigureAwait(false);
         }
+        finally
+        {
+            turn.TrySetResult();
+        }
+    }
+
+    private async Task WriteEntryAsync(
+        FileEntry file,
+        DownloadPlan plan,
+        ChunkCache cache,
+        ResumeLog resume,
+        CancellationToken cancellation)
+    {
+        cancellation.ThrowIfCancellationRequested();
+
+        var target = Path.Combine(options.InstallRoot, file.ToNativePath());
+        EnsureDirectory(Path.GetDirectoryName(target));
+        ClearReadOnly(target);
+
+        var failure = await WriteFileAsync(file, target, plan, cache, resume, cancellation).ConfigureAwait(false);
+
+        if (failure is not null)
+        {
+            lock (_gate) _failures.Add(new FailedFile(file.FileName, failure.Message, failure is ChunkMissingException));
+            Delete(target);
+            return;
+        }
+
+        ApplyAttributes(target, file);
+        resume.MarkComplete(file);
+        if (IsLarge(file, plan)) resume.ClearPartial();
+        Interlocked.Increment(ref _filesDone);
     }
 
     private async Task<Exception?> WriteFileAsync(
@@ -194,6 +284,7 @@ internal sealed class DownloadEngine(DownloadOptions options)
         CancellationToken cancellation)
     {
         var partial = plan.Partial is { } saved && saved.FileName == file.FileName ? saved : null;
+        var large = IsLarge(file, plan);
         var index = partial?.Parts ?? 0;
         var doneParts = index;
         var bytes = partial?.Bytes ?? 0;
@@ -216,7 +307,7 @@ internal sealed class DownloadEngine(DownloadOptions options)
                 for (; index < file.Parts.Length; index++)
                 {
                     var part = file.Parts[index];
-                    var data = await cache.WaitAsync(part.Guid).ConfigureAwait(false);
+                    var data = await cache.WaitAsync(part.Guid).WaitAsync(cancellation).ConfigureAwait(false);
 
                     if (part.Offset + (long)part.Size > data.Length)
                         throw new InvalidDataException(
@@ -231,7 +322,7 @@ internal sealed class DownloadEngine(DownloadOptions options)
                     doneParts = index + 1;
                     sinceCheckpoint += part.Size;
 
-                    if (sinceCheckpoint < CheckpointBytes || index + 1 >= file.Parts.Length) continue;
+                    if (!large || sinceCheckpoint < CheckpointBytes || index + 1 >= file.Parts.Length) continue;
 
                     stream.Flush(true);
                     resume.SavePartial(file, doneParts, bytes);
@@ -243,7 +334,7 @@ internal sealed class DownloadEngine(DownloadOptions options)
                 try
                 {
                     stream.Flush(true);
-                    if (bytes > 0) resume.SavePartial(file, doneParts, bytes);
+                    if (large && bytes > 0) resume.SavePartial(file, doneParts, bytes);
                 }
                 catch (IOException)
                 {
@@ -260,7 +351,7 @@ internal sealed class DownloadEngine(DownloadOptions options)
             for (var remaining = index; remaining < file.Parts.Length; remaining++)
                 cache.Release(file.Parts[remaining].Guid);
 
-            resume.ClearPartial();
+            if (large) resume.ClearPartial();
             return error;
         }
     }
@@ -326,11 +417,9 @@ internal sealed class DownloadEngine(DownloadOptions options)
 
         var rate = _networkRate.PerSecond;
         var remaining = plan.DownloadSize - downloaded;
-        var eta = rate > 1024d && remaining > 0
-            ? TimeSpan.FromSeconds(remaining / rate)
-            : TimeSpan.Zero;
+        var networkEta = rate > 1024d && remaining > 0 ? remaining / rate : 0d;
 
-        return new DownloadProgress(
+        var progress = new DownloadProgress(
             downloaded,
             plan.DownloadSize,
             written,
@@ -344,17 +433,28 @@ internal sealed class DownloadEngine(DownloadOptions options)
             rate,
             _diskRate.PerSecond,
             elapsed,
-            eta,
+            TimeSpan.Zero,
             Volatile.Read(ref _currentFile),
             _throttle.Limit,
             _throttle.Reason);
+
+        _workRate.Record(progress.WorkDone, now);
+        var work = _workRate.PerSecond;
+        var workEta = work > 1024d ? (progress.WorkTotal - progress.WorkDone) / work : 0d;
+
+        return progress with { Eta = TimeSpan.FromSeconds(Math.Max(networkEta, workEta)) };
     }
 
     private void EnsureDirectory(string? directory)
     {
         if (string.IsNullOrEmpty(directory)) return;
-        if (!_createdDirectories.Add(directory)) return;
-        Directory.CreateDirectory(directory);
+
+        lock (_gate)
+        {
+            if (_createdDirectories.Contains(directory)) return;
+            Directory.CreateDirectory(directory);
+            _createdDirectories.Add(directory);
+        }
     }
 
     private static void ClearReadOnly(string path)
