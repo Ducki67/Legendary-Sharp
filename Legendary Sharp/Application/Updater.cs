@@ -17,11 +17,12 @@ internal static class Updater
     public static bool CanUpdate =>
         OperatingSystem.IsWindows() &&
         Environment.ProcessPath is { } path &&
-        Path.GetFileNameWithoutExtension(path).StartsWith("LegendarySharp", StringComparison.OrdinalIgnoreCase);
+        (IsInstalled || Path.GetFileNameWithoutExtension(path).StartsWith("LegendarySharp", StringComparison.OrdinalIgnoreCase));
 
     public static bool IsInstalled =>
-        CanUpdate &&
-        string.Equals(Path.GetDirectoryName(Path.GetFullPath(Environment.ProcessPath!)),
+        OperatingSystem.IsWindows() &&
+        Environment.ProcessPath is { } path &&
+        string.Equals(Path.GetDirectoryName(Path.GetFullPath(path)),
             Path.GetFullPath(InstallFolder), StringComparison.OrdinalIgnoreCase);
 
     public static async Task<UpdateRelease?> FindAsync(Session session, CancellationToken cancellation)
